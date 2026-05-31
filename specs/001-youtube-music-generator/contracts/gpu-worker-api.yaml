@@ -1,0 +1,235 @@
+openapi: 3.1.0
+info:
+  title: YMG GPU Worker API
+  version: 1.0.0
+  description: |
+    GPU worker exposes a HTTP API for ACE-Step (music) and SDXL (image) generation.
+    backend ↔ GPU worker is decoupled via this contract (ADR-0031).
+    Worker can run on host (systemd) or in a container (RunPod / cloud GPU);
+    backend swaps via GPU_WORKER_BASE_URL only.
+
+servers:
+  - url: http://127.0.0.1:8001
+    description: Local host (systemd)
+  - url: https://{podid}-8001.proxy.runpod.net
+    description: RunPod Pod (future)
+    variables:
+      podid:
+        default: example
+
+paths:
+  /health:
+    get:
+      summary: Liveness + GPU status
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /generate/music:
+    post:
+      summary: Submit a music generation job (ACE-Step)
+      operationId: generateMusic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicGenerateRequest"
+      responses:
+        "202":
+          description: Accepted (queued)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /generate/image:
+    post:
+      summary: Submit an image generation job (SDXL)
+      operationId: generateImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageGenerateRequest"
+      responses:
+        "202":
+          description: Accepted (queued)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /jobs/{job_id}:
+    get:
+      summary: Poll job status
+      operationId: getJob
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, gpu_available, vram_free_mb, models_loaded]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        gpu_available:
+          type: boolean
+        vram_free_mb:
+          type: integer
+        vram_total_mb:
+          type: integer
+        models_loaded:
+          type: array
+          items:
+            type: string
+            example: "acestep-1.5"
+        worker_version:
+          type: string
+
+    MusicGenerateRequest:
+      type: object
+      required: [prompt, duration_sec, output_uri]
+      properties:
+        prompt:
+          type: string
+          description: ACE-Step prompt (system が template から合成、 ADR-0034)
+          minLength: 8
+        negative_prompt:
+          type: string
+        duration_sec:
+          type: integer
+          minimum: 30
+          maximum: 600       # ACE-Step 最大 10 分
+        bpm:
+          type: integer
+          minimum: 50
+          maximum: 200
+        music_key:
+          type: string
+          example: "C major"
+        seed:
+          type: integer
+        output_uri:
+          type: string
+          description: fsspec URI (`file://` / `s3://` / `gs://`), worker writes here
+          example: "file:///srv/ymg/outputs/audio/<post_id>/<position>.wav"
+
+    ImageGenerateRequest:
+      type: object
+      required: [prompt, output_uri]
+      properties:
+        prompt:
+          type: string
+          minLength: 10
+        negative_prompt:
+          type: string
+        model:
+          type: string
+          description: SDXL 派生モデル ID (ADR-0016)
+          default: "juggernaut-xl-v10"
+        width:
+          type: integer
+          default: 1280
+        height:
+          type: integer
+          default: 720
+        steps:
+          type: integer
+          minimum: 10
+          maximum: 80
+          default: 30
+        cfg_scale:
+          type: number
+          default: 6.0
+        seed:
+          type: integer
+        output_uri:
+          type: string
+          example: "file:///srv/ymg/outputs/image/<post_id>/thumbnail.png"
+
+    JobAccepted:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued]
+        estimated_duration_sec:
+          type: integer
+
+    JobStatus:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        output_uri:
+          type: string
+          description: present when status == "succeeded"
+        duration_ms:
+          type: integer
+        vram_peak_mb:
+          type: integer
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    ErrorDetail:
+      type: object
+      required: [category, message]
+      properties:
+        category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        message:
+          type: string
+        retryable:
+          type: boolean
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+    NotFound:
+      description: Job not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"

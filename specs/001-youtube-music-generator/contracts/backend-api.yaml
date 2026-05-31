@@ -1,0 +1,805 @@
+openapi: 3.1.0
+info:
+  title: YMG Backend API
+  version: 1.0.0
+  description: |
+    FastAPI backend for YouTube music auto-posting system.
+    Provides admin UI endpoints (Next.js frontend) and orchestrates GPU worker / LLM / YouTube.
+    All endpoints require Basic Auth (ADR-0013, LAN-internal).
+
+servers:
+  - url: http://127.0.0.1:8000
+
+security:
+  - basicAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Backend liveness + dependency status
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /plans:
+    get:
+      summary: List plans (filter by cycle / status)
+      operationId: listPlans
+      parameters:
+        - in: query
+          name: cycle
+          schema:
+            type: string
+            enum: [daily, weekly]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [generated, approved, executing, completed, failed]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Plan"
+                  total:
+                    type: integer
+
+    post:
+      summary: Generate a new plan via improvement-plan LLM
+      operationId: generatePlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cycle, target_date]
+              properties:
+                cycle:
+                  type: string
+                  enum: [daily, weekly]
+                target_date:
+                  type: string
+                  format: date
+                force_regenerate:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Plan generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "409":
+          description: Already exists (use force_regenerate=true)
+        "422":
+          description: LLM validation failed after retries
+
+  /plans/{plan_id}:
+    get:
+      operationId: getPlan
+      parameters:
+        - $ref: "#/components/parameters/PlanIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+
+  /plans/{plan_id}/approve:
+    post:
+      summary: Approve a plan → unlocks daily cycle execution
+      operationId: approvePlan
+      parameters:
+        - $ref: "#/components/parameters/PlanIdPath"
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+
+  /posts:
+    get:
+      operationId: listPosts
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, generating, generated, posting, posted, failed]
+        - in: query
+          name: genre
+          schema:
+            type: string
+        - in: query
+          name: from_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to_date
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Post"
+
+  /posts/{post_id}:
+    get:
+      operationId: getPost
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /posts/{post_id}/retry:
+    post:
+      summary: Retry a failed post pipeline
+      operationId: retryPost
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "202":
+          description: Retry queued
+
+  /dryrun/outputs:
+    get:
+      summary: List dryrun outputs (review queue)
+      operationId: listDryrunOutputs
+      parameters:
+        - in: query
+          name: state
+          schema:
+            type: string
+            enum: [pending, approved, rejected, auto_expired, posted]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DryrunOutput"
+
+  /dryrun/outputs/{id}/approve:
+    post:
+      summary: Approve dryrun → schedule YouTube post
+      operationId: approveDryrun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryrunOutput"
+
+  /dryrun/outputs/{id}/reject:
+    post:
+      summary: Reject dryrun → delete + feed reason to next planner LLM
+      operationId: rejectDryrun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 4
+      responses:
+        "200":
+          description: Rejected
+
+  /scheduler:
+    get:
+      summary: Get scheduler enabled state
+      operationId: getSchedulerState
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerState"
+
+    put:
+      summary: Enable / disable scheduler (ADR-0031)
+      operationId: setSchedulerState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerState"
+
+  /scheduler/panic-stop:
+    post:
+      summary: Emergency stop (ADR-0031). Disables scheduler + lists recent posts for private-flip.
+      operationId: panicStop
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                window_hours:
+                  type: integer
+                  default: 24
+                set_private:
+                  type: array
+                  description: youtube_video_id 配列、 渡されたものを private に変更
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Action result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scheduler_enabled:
+                    type: boolean
+                  recent_videos:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Video"
+                  updated_count:
+                    type: integer
+
+  /analytics/summary:
+    get:
+      summary: 集計サマリ(改善計画 LLM 入力用と同じビュー)
+      operationId: getAnalyticsSummary
+      parameters:
+        - in: query
+          name: window_days
+          schema:
+            type: integer
+            default: 14
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+
+  /analytics/videos:
+    get:
+      operationId: listAnalyticsVideos
+      parameters:
+        - in: query
+          name: from_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: genre
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VideoAnalytics"
+
+  /llm/usage:
+    get:
+      summary: 月次 LLM 使用量 + コスト(ADR-0024)
+      operationId: getLlmUsage
+      parameters:
+        - in: query
+          name: month
+          schema:
+            type: string
+            pattern: "^[0-9]{4}-[0-9]{2}$"
+            example: "2026-05"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmUsage"
+
+  /llm/providers:
+    get:
+      operationId: listLlmProviders
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LlmProviderConfig"
+
+    put:
+      summary: Change active LLM provider (ADR-0019)
+      operationId: setActiveLlmProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, auth_mode]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic, ollama]
+                auth_mode:
+                  type: string
+                  enum: [api_key, codex_oauth]
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Invalid combination (Anthropic + subscription is forbidden)
+
+  /prompts/{prompt_name}:
+    get:
+      operationId: getPromptVersion
+      parameters:
+        - in: path
+          name: prompt_name
+          required: true
+          schema:
+            type: string
+            example: "planner/system_v1"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptVersion"
+
+  /jobs/stream:
+    get:
+      summary: SSE for live job progress (ADR-0023)
+      operationId: streamJobs
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: JSON-Lines events of JobEvent
+
+  /youtube/videos/{video_id}/privacy:
+    put:
+      summary: Direct privacy update (used by panic-stop or manual)
+      operationId: setVideoPrivacy
+      parameters:
+        - in: path
+          name: video_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [privacy_status]
+              properties:
+                privacy_status:
+                  type: string
+                  enum: [public, unlisted, private]
+      responses:
+        "200":
+          description: OK
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  parameters:
+    PlanIdPath:
+      in: path
+      name: plan_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PostIdPath:
+      in: path
+      name: post_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        db:
+          type: string
+          enum: [ok, degraded]
+        gpu_worker:
+          type: string
+          enum: [ok, unreachable]
+        scheduler_enabled:
+          type: boolean
+        dryrun_enabled:
+          type: boolean
+        llm_provider:
+          type: string
+
+    Plan:
+      type: object
+      required: [id, cycle, status, payload, rationale, llm_provider, llm_model, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cycle:
+          type: string
+          enum: [daily, weekly]
+        target_date:
+          type: string
+          format: date
+        target_week_start:
+          type: string
+          format: date
+        payload:
+          description: DailyPlan / WeeklyPlan の Pydantic dump(ADR-0032)
+          type: object
+        rationale:
+          type: string
+        status:
+          type: string
+          enum: [generated, approved, executing, completed, failed]
+        llm_provider:
+          type: string
+        llm_model:
+          type: string
+        llm_prompt_version:
+          type: string
+        llm_cost_usd:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
+
+    Post:
+      type: object
+      required: [id, plan_id, position, genre, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        genre:
+          type: string
+        payload:
+          type: object
+        status:
+          type: string
+          enum: [pending, generating, generated, posting, posted, failed]
+        final_title:
+          type: string
+        final_description:
+          type: string
+        thumbnail_uri:
+          type: string
+        video_uri:
+          type: string
+        youtube_video_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        posted_at:
+          type: string
+          format: date-time
+        retention_24h:
+          type: number
+        views_24h:
+          type: integer
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    DryrunOutput:
+      type: object
+      required: [id, post_id, state, video_uri, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [pending, approved, rejected, auto_expired, posted]
+        video_uri:
+          type: string
+        reject_reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        reviewed_at:
+          type: string
+          format: date-time
+
+    SchedulerState:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+
+    Video:
+      type: object
+      required: [youtube_video_id, title, posted_at, privacy_status, contains_synthetic_media]
+      properties:
+        youtube_video_id:
+          type: string
+        title:
+          type: string
+        genre:
+          type: string
+        duration_sec:
+          type: integer
+        posted_at:
+          type: string
+          format: date-time
+        privacy_status:
+          type: string
+          enum: [public, unlisted, private, deleted]
+        contains_synthetic_media:
+          type: boolean
+        thumbnail_uri:
+          type: string
+
+    VideoAnalytics:
+      allOf:
+        - $ref: "#/components/schemas/Video"
+        - type: object
+          properties:
+            metrics:
+              type: object
+              properties:
+                views:
+                  type: integer
+                estimated_minutes_watched:
+                  type: number
+                average_view_duration_sec:
+                  type: integer
+                retention_pct:
+                  type: number
+                impressions:
+                  type: integer
+                ctr_pct:
+                  type: number
+                traffic_sources:
+                  type: object
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        window_days:
+          type: integer
+        sample_size:
+          type: integer
+        by_genre:
+          type: array
+          items:
+            type: object
+            properties:
+              genre:
+                type: string
+              video_count:
+                type: integer
+              avg_retention_pct:
+                type: number
+              total_views:
+                type: integer
+        top_videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoAnalytics"
+
+    LlmUsage:
+      type: object
+      properties:
+        month:
+          type: string
+        total_cost_usd:
+          type: number
+        budget_usd:
+          type: number
+        budget_pct:
+          type: number
+        by_provider:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              cost_usd:
+                type: number
+              prompt_tokens:
+                type: integer
+              cached_tokens:
+                type: integer
+              completion_tokens:
+                type: integer
+
+    LlmProviderConfig:
+      type: object
+      required: [provider, available, auth_modes]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        available:
+          type: boolean
+        auth_modes:
+          type: array
+          items:
+            type: string
+            enum: [api_key, codex_oauth]
+        models:
+          type: array
+          items:
+            type: string
+
+    PromptVersion:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        content:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    JobEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        job_name:
+          type: string
+        context_type:
+          type: string
+        context_id:
+          type: string
+          format: uuid
+        step:
+          type: string
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [category, message]
+      properties:
+        category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        message:
+          type: string
+        detail:
+          type: object
