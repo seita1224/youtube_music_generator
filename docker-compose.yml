@@ -1,0 +1,55 @@
+# backend / frontend / postgres(pgvector) を定義 (ADR-0029, ADR-0031)。
+# GPU worker は host 直 + systemd のため compose には含めない (ADR-0031 ハイブリッド)。
+# backend からは GPU_WORKER_BASE_URL (既定 http://127.0.0.1:8001) で到達する。
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ymg}
+      POSTGRES_USER: ${POSTGRES_USER:-ymg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ymg} -d ${POSTGRES_DB:-ymg}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+    extra_hosts:
+      # backend(コンテナ)から host の GPU worker(127.0.0.1:8001)へ到達するため
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${DATA_ROOT:-./data}:/srv/ymg
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      # frontend → backend は内部ネットワーク経由
+      BACKEND_BASE_URL: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:
