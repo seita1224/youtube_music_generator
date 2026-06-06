@@ -67,4 +67,5 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "critical: critical path tests (100% coverage required, Constitution II)",
+    "integration: 実 DB / 外部依存を伴う統合テスト (接続不可なら skip)",
 ]
