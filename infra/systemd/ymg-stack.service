@@ -1,0 +1,32 @@
+# backend / frontend / postgres の docker compose スタックをオートスタートさせる (ADR-0031 (3))。
+# GPU worker は別 unit (ymg-gpu-worker.service) で host 直常駐するため、ここには含めない。
+# APScheduler の自動投稿は app_state.scheduler_enabled に依存し、reboot 直後は false 起動が原則 (ADR-0031)。
+#
+# インストール:
+#   sudo cp infra/systemd/ymg-stack.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ymg-stack.service       # reboot 後もオートスタート (ADR-0031 推奨)
+#
+# 実体パス・User は環境に合わせて調整する。
+
+[Unit]
+Description=YMG stack (backend + frontend + postgres via docker compose)
+Documentation=https://github.com/seita1224/youtube_music_generator
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=seita
+Group=seita
+WorkingDirectory=/home/seita/program/youtube_music_generator
+ExecStart=docker compose up -d backend frontend postgres
+ExecStop=docker compose down
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

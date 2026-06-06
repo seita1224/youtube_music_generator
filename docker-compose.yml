@@ -11,7 +11,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ymg}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      # ホスト公開ポートは POSTGRES_HOST_PORT で変更可(他プロジェクトの 5432 と衝突する環境向け)
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

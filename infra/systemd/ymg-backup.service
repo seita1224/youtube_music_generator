@@ -1,0 +1,24 @@
+# 日次バックアップ (pg_dump + 楽曲/サムネメタデータ rsync, Fernet 鍵は除外) を実行する oneshot unit。
+# 起動は ymg-backup.timer (毎日 03:00) が担う。 単体実行: sudo systemctl start ymg-backup.service
+# 実装は infra/scripts/backup.sh (T130, ADR-0026)。
+#
+# インストール:
+#   sudo cp infra/systemd/ymg-backup.service infra/systemd/ymg-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ymg-backup.timer        # timer を有効化 (ADR-0026 推奨)
+
+[Unit]
+Description=YMG daily backup (pg_dump + media metadata rsync)
+Documentation=https://github.com/seita1224/youtube_music_generator
+After=network-online.target ymg-stack.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=seita
+Group=seita
+WorkingDirectory=/home/seita/program/youtube_music_generator
+EnvironmentFile=-/home/seita/program/youtube_music_generator/.env
+ExecStart=/usr/bin/env bash infra/scripts/backup.sh
+# pg_dump + rsync が長引くことを想定
+TimeoutStartSec=3600

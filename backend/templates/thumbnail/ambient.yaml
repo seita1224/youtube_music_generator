@@ -1,0 +1,12 @@
+# Thumbnail template — ambient (ADR-0034 §(3)).
+# Genre-specific font / palette overrides for the Pillow overlay. Shared
+# geometry lives in _shared/layout.json and _shared/badge.json.
+version: 1
+genre: "ambient"             # canonical genres.name (data-model.md)
+font_primary: "Cormorant Garamond"
+font_secondary: "Noto Sans JP"
+color_text: "#E8E8E8"
+color_outline: "#1A1A2E"
+outline_width: 4
+text_position: "center"
+genre_badge_color: "#1A1A1A"

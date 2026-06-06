@@ -1,0 +1,20 @@
+# ymg-backup.service を毎日 03:00 (ローカルタイム) に起動する timer (ADR-0026 深夜日次)。
+#
+# インストール:
+#   sudo cp infra/systemd/ymg-backup.service infra/systemd/ymg-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ymg-backup.timer        # 有効化 (ADR-0026 推奨)
+#   systemctl list-timers ymg-backup.timer              # 次回実行時刻の確認
+
+[Unit]
+Description=YMG daily backup timer (03:00 local)
+Documentation=https://github.com/seita1224/youtube_music_generator
+
+[Timer]
+# 毎日 03:00。 マシン停止で取り逃した場合は起動後に追実行する。
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=ymg-backup.service
+
+[Install]
+WantedBy=timers.target

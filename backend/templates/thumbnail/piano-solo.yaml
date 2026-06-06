@@ -1,0 +1,12 @@
+# Thumbnail template — piano solo (ADR-0034 §(3)).
+# Genre-specific font / palette overrides for the Pillow overlay. Shared
+# geometry lives in _shared/layout.json and _shared/badge.json.
+version: 1
+genre: "piano solo"          # canonical genres.name (data-model.md)
+font_primary: "Playfair Display"
+font_secondary: "Noto Sans JP"
+color_text: "#F8F8F0"
+color_outline: "#2C2C2C"
+outline_width: 4
+text_position: "center-bottom"
+genre_badge_color: "#1A1A1A"

@@ -1,0 +1,15 @@
+# Title template for the "lo-fi hip-hop" genre (ADR-0034).
+#
+# Directive syntax (ADR-0017):
+#   - {{<ascii identifier>}} -> system variable substitution (e.g. {{duration}}, {{genre}})
+#   - {{<free-form Japanese instruction>}} -> LLM-generated text
+#
+# Title policy (ADR-0034 section 1):
+#   "{English genre name} {duration}min | {<=12-char Japanese subtitle} {<=1 emoji}"
+#   English genre + duration first (overseas SEO + Japanese BGM search),
+#   Japanese subtitle <=12 chars (display width ~2x of English),
+#   optional single emoji (avoids spam classification, saves mobile width).
+genre: "lo-fi hip-hop"
+display_name: "Lo-Fi Hip Hop"
+template: "Lo-Fi Hip Hop {{duration}}min | {{12字以内の日本語サブタイトル}} {{絵文字を1個まで、雰囲気に合うものを}}"
+example: "Lo-Fi Hip Hop 30min | 雨夜のラウンジ 🌧"

@@ -1,0 +1,36 @@
+# GPU worker (ACE-Step + SDXL) を host 直 + systemd で常駐させる (ADR-0031 (3))。
+# backend(docker compose 側)からは GPU_WORKER_BASE_URL=http://127.0.0.1:8001 で到達する。
+#
+# インストール:
+#   sudo cp infra/systemd/ymg-gpu-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ymg-gpu-worker.service   # reboot 後もオートスタート (ADR-0031 推奨)
+#
+# 実体パス・User は環境に合わせて調整する。 以下は本番 GPU マシン (Ubuntu) の既定値。
+
+[Unit]
+Description=YMG GPU worker (ACE-Step + SDXL inference, FastAPI)
+Documentation=https://github.com/seita1224/youtube_music_generator
+# GPU ドライバ・ネットワークが上がってから起動する
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seita
+Group=seita
+WorkingDirectory=/home/seita/program/youtube_music_generator/gpu_worker
+# .env は repo ルートにある (任意・存在しなくても起動可)
+EnvironmentFile=-/home/seita/program/youtube_music_generator/.env
+# systemd の最小 PATH には ~/.local/bin が無いため uv の在処を追加する
+Environment=PATH=/home/seita/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 127.0.0.1 のみで listen (LAN 外には出さない, ADR-0031)
+ExecStart=uv run uvicorn ymg_gpu_worker.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+# GPU モデルロードに時間がかかるため余裕を持たせる
+TimeoutStartSec=300
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

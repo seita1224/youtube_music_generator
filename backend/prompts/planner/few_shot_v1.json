@@ -1,0 +1,40 @@
+{
+  "cycle": "daily",
+  "plan_id": "00000000-0000-0000-0000-000000000000",
+  "target_date": "2026-06-02",
+  "posts": [
+    {
+      "genre": "lo-fi hip-hop",
+      "mood": "rainy late-night lounge, nostalgic and warm",
+      "bpm_range": [
+        72,
+        82
+      ],
+      "visual_direction": "雨に濡れた夜の都会、ネオンが滲む窓越しのラウンジ、暖色の間接照明と紫煙、35mm フィルムの粒子感",
+      "title_directive": "Lo-Fi Hip Hop {{duration}}min | {{12字以内の日本語サブタイト}} {{絵文字1個まで}}",
+      "description_directive": "{{120字以内の英語シーン描写}} / {{120字以内の日本語シーン描写}} を冒頭に置き、雨夜のラウンジで作業する情景を描く",
+      "thumbnail_directive": "{{日本語サブタイト}} を中央下に大きく、左上にジャンルバッジ、右下に 30 MIN",
+      "schedule_jst": null
+    },
+    {
+      "genre": "ambient",
+      "mood": "deep sleep drift, calm and weightless",
+      "bpm_range": null,
+      "visual_direction": "霧に沈む静かな湖面、夜明け前の青い薄明、輪郭の溶けた山影、ゆっくり流れる雲、ソフトフォーカス",
+      "title_directive": "Ambient {{duration}}min | {{12字以内の日本語サブタイト}}",
+      "description_directive": "{{120字以内の英語シーン描写}} / {{120字以内の日本語シーン描写}} で睡眠・瞑想向けの静けさを伝える",
+      "thumbnail_directive": null,
+      "schedule_jst": null
+    }
+  ],
+  "rationale": "直近7日で lo-fi hip-hop の平均 retention 48% が最も高く watch time 寄与も大きいため主力枠を1本維持。ambient はサンプル12本で平均 retention 41% と睡眠用途の安定需要が見えるため、夜間スロットに探索ではなく堅実な2本目として配置した。future garage は前週 retention 29% と低調だったため本日は見送る。",
+  "referenced_metrics": {
+    "window_days": 7,
+    "sample_size": 11,
+    "top_metrics_summary": "過去7日11本: lo-fi hip-hop 平均 retention 48% / 平均 views 1,240、ambient 41% / 980、chillhop 39% / 760、future garage 29% / 410。lo-fi と ambient が retention 上位2ジャンル。"
+  },
+  "expected_kpi": {
+    "retention_pct": 46.0,
+    "expected_views_24h": 1100
+  }
+}

@@ -61,106 +61,106 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### DB / マイグレーション
 
-- [ ] T016 backend `backend/alembic/versions/001_initial.py` 作成: data-model.md の全 ENUM(plan_cycle, plan_status, post_status, gpu_job_type, gpu_job_status, dryrun_state, error_category, acoustid_status, youtube_privacy_status, llm_provider, llm_auth_mode)を DDL 化
-- [ ] T017 backend 001_initial.py に全テーブル DDL を追加(genres / plans / posts / plan_metric_snapshot / videos / audio_tracks / gpu_jobs / dryrun_outputs / oauth_credentials / usage_log / model_pricing / analytics_daily / comments / job_history / app_state / audit_log)
-- [ ] T018 backend 001_initial.py の seed: `genres` 6 件(ADR-0033)、 `app_state` 4 件(scheduler_enabled=false 等)、 `model_pricing` の初期単価表
-- [ ] T019 `make migrate` から alembic upgrade head が走り、 各テーブル / ENUM が postgres に展開されることを確認
-- [ ] T020 [P] backend `backend/src/ymg_backend/infrastructure/db/session.py`: SQLAlchemy 2.x AsyncSession + engine
-- [ ] T021 [P] backend `backend/src/ymg_backend/infrastructure/db/models/` 配下に各テーブルの ORM model を 1 ファイル 1 entity で配置(15 テーブル)
+- [x] T016 backend `backend/alembic/versions/001_initial.py` 作成: data-model.md の全 ENUM(plan_cycle, plan_status, post_status, gpu_job_type, gpu_job_status, dryrun_state, error_category, acoustid_status, youtube_privacy_status, llm_provider, llm_auth_mode)を DDL 化
+- [x] T017 backend 001_initial.py に全テーブル DDL を追加(genres / plans / posts / plan_metric_snapshot / videos / audio_tracks / gpu_jobs / dryrun_outputs / oauth_credentials / usage_log / model_pricing / analytics_daily / comments / job_history / app_state / audit_log)
+- [x] T018 backend 001_initial.py の seed: `genres` 6 件(ADR-0033)、 `app_state` 4 件(scheduler_enabled=false 等)、 `model_pricing` の初期単価表
+- [x] T019 `make migrate` から alembic upgrade head が走り、 各テーブル / ENUM が postgres に展開されることを確認
+- [x] T020 [P] backend `backend/src/ymg_backend/infrastructure/db/session.py`: SQLAlchemy 2.x AsyncSession + engine
+- [x] T021 [P] backend `backend/src/ymg_backend/infrastructure/db/models/` 配下に各テーブルの ORM model を 1 ファイル 1 entity で配置(15 テーブル)
 
 ### Config / Security / Logging
 
-- [ ] T022 [P] backend `backend/src/ymg_backend/core/config.py`: pydantic-settings で `.env` 読み込み(全 quickstart §3 変数)
-- [ ] T023 [P] backend `backend/src/ymg_backend/core/logging.py`: loguru JSON sink、 context binding(`video_id`, `genre`, `step`)
-- [ ] T024 [P] backend `backend/src/ymg_backend/core/security.py`: Basic auth dependency(FastAPI Depends で全 endpoint に効く形)、 Fernet 暗号化 / 復号ヘルパ
-- [ ] T025 [P] backend `backend/src/ymg_backend/domain/errors/__init__.py`: 5 error カテゴリ(transient/recoverable/fatal/compliance/quality)の Exception 階層 + `error_category` 解決ロジック(ADR-0028)
+- [x] T022 [P] backend `backend/src/ymg_backend/core/config.py`: pydantic-settings で `.env` 読み込み(全 quickstart §3 変数)
+- [x] T023 [P] backend `backend/src/ymg_backend/core/logging.py`: loguru JSON sink、 context binding(`video_id`, `genre`, `step`)
+- [x] T024 [P] backend `backend/src/ymg_backend/core/security.py`: Basic auth dependency(FastAPI Depends で全 endpoint に効く形)、 Fernet 暗号化 / 復号ヘルパ
+- [x] T025 [P] backend `backend/src/ymg_backend/domain/errors/__init__.py`: 5 error カテゴリ(transient/recoverable/fatal/compliance/quality)の Exception 階層 + `error_category` 解決ロジック(ADR-0028)
 
 ### Critical Path: Fernet 暗号化(US1 で利用)
 
-- [ ] T026 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_security_fernet.py`: 暗号化 / 復号 / 鍵不一致 / 改竄検出 のラウンドトリップを 100% カバー(Constitution II)
-- [ ] T027 T026 が fail することを確認 → backend `core/security.py` の Fernet 部分を実装 → T026 を green に
+- [x] T026 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_security_fernet.py`: 暗号化 / 復号 / 鍵不一致 / 改竄検出 のラウンドトリップを 100% カバー(Constitution II)
+- [x] T027 T026 が fail することを確認 → backend `core/security.py` の Fernet 部分を実装 → T026 を green に
 
 ### LLM Provider 抽象化(ADR-0019、 contracts/llm-provider-interface.md)
 
-- [ ] T028 [P] [Foundation] backend `backend/src/ymg_backend/llm/base.py`: LlmProvider ABC + LlmMessage / LlmRequest[T] / LlmResponse[T] / LlmUsage / LlmError(generic Pydantic v2)
-- [ ] T029 [P] [Foundation] backend `backend/src/ymg_backend/llm/openai_provider.py`: Responses API + JSON Schema structured output + prompt caching 自動利用
-- [ ] T030 [P] [Foundation] backend `backend/src/ymg_backend/llm/anthropic_provider.py`: Messages API + tool_use 経由 structured output + `cache_control: ephemeral`、 **subscription auth mode を起動時拒否**
-- [ ] T031 [P] [Foundation] backend `backend/src/ymg_backend/llm/ollama_provider.py`: chat API + `model_validate_json` での後検証
-- [ ] T032 [P] [Foundation] backend `backend/src/ymg_backend/llm/pricing.py`: `model_pricing` テーブル参照 + `cost_usd` 計算(prompt caching 割引対応)
-- [ ] T033 [P] [Foundation] backend `backend/src/ymg_backend/llm/usage_writer.py`: 全 LLM 呼び出しを `usage_log` に永続化
-- [ ] T034 [Foundation] backend `backend/src/ymg_backend/llm/factory.py`: env / app_state から active provider 解決、 Anthropic + subscription 起動時拒否(FR-022)
+- [x] T028 [P] [Foundation] backend `backend/src/ymg_backend/llm/base.py`: LlmProvider ABC + LlmMessage / LlmRequest[T] / LlmResponse[T] / LlmUsage / LlmError(generic Pydantic v2)
+- [x] T029 [P] [Foundation] backend `backend/src/ymg_backend/llm/openai_provider.py`: Responses API + JSON Schema structured output + prompt caching 自動利用
+- [x] T030 [P] [Foundation] backend `backend/src/ymg_backend/llm/anthropic_provider.py`: Messages API + tool_use 経由 structured output + `cache_control: ephemeral`、 **subscription auth mode を起動時拒否**
+- [x] T031 [P] [Foundation] backend `backend/src/ymg_backend/llm/ollama_provider.py`: chat API + `model_validate_json` での後検証
+- [x] T032 [P] [Foundation] backend `backend/src/ymg_backend/llm/pricing.py`: `model_pricing` テーブル参照 + `cost_usd` 計算(prompt caching 割引対応)
+- [x] T033 [P] [Foundation] backend `backend/src/ymg_backend/llm/usage_writer.py`: 全 LLM 呼び出しを `usage_log` に永続化
+- [x] T034 [Foundation] backend `backend/src/ymg_backend/llm/factory.py`: env / app_state から active provider 解決、 Anthropic + subscription 起動時拒否(FR-022)
 
 ### Critical Path: LLM Pydantic Validation
 
-- [ ] T035 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_llm_provider.py`: respx で OpenAI / Anthropic / Ollama レスポンスを mock、 Pydantic validation 失敗時の最大 2 回リトライ(temperature 低下)+ `recoverable` 例外、 Anthropic + subscription の起動時拒否、 prompt caching hit カウント、 cost 計算を 100% カバー
-- [ ] T036 T028〜T034 を T035 で driven の形で完成、 T035 green 化
+- [x] T035 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_llm_provider.py`: respx で OpenAI / Anthropic / Ollama レスポンスを mock、 Pydantic validation 失敗時の最大 2 回リトライ(temperature 低下)+ `recoverable` 例外、 Anthropic + subscription の起動時拒否、 prompt caching hit カウント、 cost 計算を 100% カバー
+- [x] T036 T028〜T034 を T035 で driven の形で完成、 T035 green 化
 
 ### Storage 抽象化(ADR-0022)
 
-- [ ] T037 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/storage/fsspec_wrapper.py`: `file:// / s3:// / gs://` 統一インターフェース、 URI からの read/write/exists/delete
+- [x] T037 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/storage/fsspec_wrapper.py`: `file:// / s3:// / gs://` 統一インターフェース、 URI からの read/write/exists/delete
 
 ### Pydantic v2 ドメインモデル(ADR-0032)
 
-- [ ] T038 [P] [Foundation] backend `backend/src/ymg_backend/domain/plans/schemas.py`: DailyPlan / DailyPost / WeeklyPlan / ExperimentSlot / ReferencedMetrics / ExpectedKpi(data-model.md / ADR-0032 と完全整合)
-- [ ] T039 [P] [Foundation] backend `backend/src/ymg_backend/domain/plans/schemas.py` に validator: `genre` 辞書照合(context 注入)、 `genre_distribution` 合計 1.0、 `posts` 1〜2 件、 各 min_length 制約
+- [x] T038 [P] [Foundation] backend `backend/src/ymg_backend/domain/plans/schemas.py`: DailyPlan / DailyPost / WeeklyPlan / ExperimentSlot / ReferencedMetrics / ExpectedKpi(data-model.md / ADR-0032 と完全整合)
+- [x] T039 [P] [Foundation] backend `backend/src/ymg_backend/domain/plans/schemas.py` に validator: `genre` 辞書照合(context 注入)、 `genre_distribution` 合計 1.0、 `posts` 1〜2 件、 各 min_length 制約
 
 ### Critical Path: Directive Parser(ADR-0017)
 
-- [ ] T040 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_directive_parser.py`: `{{genre}}` 変数 / `{{12字以内の日本語サブタイト}}` 自由文 / mixed 入力 / 未定義変数エラー / 空 directive 拒否 を 100% カバー
-- [ ] T041 [Foundation] backend `backend/src/ymg_backend/domain/directive/parser.py` を T040 で driven の形で実装
+- [x] T040 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_directive_parser.py`: `{{genre}}` 変数 / `{{12字以内の日本語サブタイト}}` 自由文 / mixed 入力 / 未定義変数エラー / 空 directive 拒否 を 100% カバー
+- [x] T041 [Foundation] backend `backend/src/ymg_backend/domain/directive/parser.py` を T040 で driven の形で実装
 
 ### Prompt / Template Loaders
 
-- [ ] T042 [P] [Foundation] backend `backend/src/ymg_backend/domain/prompts/loader.py`: `backend/prompts/<area>/<name>_v<N>.md` を version 解決 + 読み込み
-- [ ] T043 [P] [Foundation] backend `backend/src/ymg_backend/domain/templates/loader.py`: `backend/templates/{title,description,thumbnail}/*.yaml` を YAML パース、 ジャンル → テンプレ解決
-- [ ] T044 [P] [Foundation] backend `backend/prompts/planner/system_v1.md` 配置(ADR-0033 system prompt 骨格を実体化)
-- [ ] T045 [P] [Foundation] backend `backend/prompts/planner/few_shot_v1.json` 配置(手書き DailyPlan サンプル 1 件)
-- [ ] T046 [P] [Foundation] backend `backend/prompts/finisher/title_v1.md` + `description_v1.md` 配置
-- [ ] T047 [P] [Foundation] backend `backend/templates/title/*.yaml` × 6 ジャンル(ADR-0034)
-- [ ] T048 [P] [Foundation] backend `backend/templates/description/default.yaml` + `_shared/{ai_disclosure,channel_promo}.txt`
-- [ ] T049 [P] [Foundation] backend `backend/templates/thumbnail/*.yaml` × 6 + `_shared/{layout,badge}.json`
+- [x] T042 [P] [Foundation] backend `backend/src/ymg_backend/domain/prompts/loader.py`: `backend/prompts/<area>/<name>_v<N>.md` を version 解決 + 読み込み
+- [x] T043 [P] [Foundation] backend `backend/src/ymg_backend/domain/templates/loader.py`: `backend/templates/{title,description,thumbnail}/*.yaml` を YAML パース、 ジャンル → テンプレ解決
+- [x] T044 [P] [Foundation] backend `backend/prompts/planner/system_v1.md` 配置(ADR-0033 system prompt 骨格を実体化)
+- [x] T045 [P] [Foundation] backend `backend/prompts/planner/few_shot_v1.json` 配置(手書き DailyPlan サンプル 1 件)
+- [x] T046 [P] [Foundation] backend `backend/prompts/finisher/title_v1.md` + `description_v1.md` 配置
+- [x] T047 [P] [Foundation] backend `backend/templates/title/*.yaml` × 6 ジャンル(ADR-0034)
+- [x] T048 [P] [Foundation] backend `backend/templates/description/default.yaml` + `_shared/{ai_disclosure,channel_promo}.txt`
+- [x] T049 [P] [Foundation] backend `backend/templates/thumbnail/*.yaml` × 6 + `_shared/{layout,badge}.json`
 - [ ] T050 [P] [Foundation] backend `backend/templates/fonts/` に SIL OFL ライセンスフォント 6 + Noto Sans JP を同梱
 
 ### audit_log Writer
 
-- [ ] T051 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/audit.py`: `audit_log` 書き込みヘルパ(actor / action / target / payload)
+- [x] T051 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/audit.py`: `audit_log` 書き込みヘルパ(actor / action / target / payload)
 
 ### FastAPI スケルトン
 
-- [ ] T052 [Foundation] backend `backend/src/ymg_backend/main.py`: FastAPI app factory、 Basic auth dependency 適用、 `/health` endpoint、 lifespan で DB connect / scheduler 起動準備、 `app_state.scheduler_enabled` 初期確認(false 起動、 ADR-0031)
-- [ ] T053 [Foundation] backend `backend/src/ymg_backend/api/health.py`: `GET /health` で DB / GPU worker / scheduler_enabled / dryrun_enabled / llm_provider を返す
+- [x] T052 [Foundation] backend `backend/src/ymg_backend/main.py`: FastAPI app factory、 Basic auth dependency 適用、 `/health` endpoint、 lifespan で DB connect / scheduler 起動準備、 `app_state.scheduler_enabled` 初期確認(false 起動、 ADR-0031)
+- [x] T053 [Foundation] backend `backend/src/ymg_backend/api/health.py`: `GET /health` で DB / GPU worker / scheduler_enabled / dryrun_enabled / llm_provider を返す
 
 ### GPU Worker 骨格
 
-- [ ] T054 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/main.py`: FastAPI app + `/health`(gpu_available / vram_free_mb / models_loaded)
-- [ ] T055 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/api/generate.py`: `POST /generate/music` + `POST /generate/image` + `GET /jobs/{id}` の stub(contracts/gpu-worker-api.yaml と整合)
-- [ ] T056 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/jobs/queue.py`: in-process job queue(asyncio Queue + dict による状態管理)
-- [ ] T057 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/runners/acestep.py`: ACE-Step 1.5 ローダ + 1 リクエストごとに音楽生成(prompt / duration_sec / bpm / seed)
-- [ ] T058 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/runners/sdxl.py`: SDXL 派生モデルローダ(default Juggernaut XL v10)+ 画像生成
-- [ ] T059 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/infrastructure/storage.py`: fsspec wrapper(backend と同等インターフェース)
+- [x] T054 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/main.py`: FastAPI app + `/health`(gpu_available / vram_free_mb / models_loaded)
+- [x] T055 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/api/generate.py`: `POST /generate/music` + `POST /generate/image` + `GET /jobs/{id}` の stub(contracts/gpu-worker-api.yaml と整合)
+- [x] T056 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/jobs/queue.py`: in-process job queue(asyncio Queue + dict による状態管理)
+- [x] T057 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/runners/acestep.py`: ACE-Step 1.5 ローダ + 1 リクエストごとに音楽生成(prompt / duration_sec / bpm / seed)
+- [x] T058 [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/runners/sdxl.py`: SDXL 派生モデルローダ(default Juggernaut XL v10)+ 画像生成
+- [x] T059 [P] [Foundation] gpu_worker `gpu_worker/src/ymg_gpu_worker/infrastructure/storage.py`: fsspec wrapper(backend と同等インターフェース)
 
 ### Backend → GPU Worker HTTP Client
 
-- [ ] T060 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/gpu_worker_client.py`: httpx.AsyncClient ラッパ、 `GPU_WORKER_BASE_URL` を env から、 retry / timeout / health チェック
+- [x] T060 [P] [Foundation] backend `backend/src/ymg_backend/infrastructure/gpu_worker_client.py`: httpx.AsyncClient ラッパ、 `GPU_WORKER_BASE_URL` を env から、 retry / timeout / health チェック
 
 ### systemd Units
 
-- [ ] T061 [P] [Foundation] `infra/systemd/ymg-gpu-worker.service`: `ExecStart=uv run uvicorn ymg_gpu_worker.main:app --host 127.0.0.1 --port 8001`、 `Restart=on-failure`、 enable 推奨
-- [ ] T062 [P] [Foundation] `infra/systemd/ymg-stack.service`: `ExecStart=docker compose up -d backend frontend postgres`、 `Restart=on-failure`
-- [ ] T063 [P] [Foundation] `infra/systemd/ymg-backup.service` + `ymg-backup.timer`: 日次 03:00 で `infra/scripts/backup.sh` 実行(ADR-0026)
+- [x] T061 [P] [Foundation] `infra/systemd/ymg-gpu-worker.service`: `ExecStart=uv run uvicorn ymg_gpu_worker.main:app --host 127.0.0.1 --port 8001`、 `Restart=on-failure`、 enable 推奨
+- [x] T062 [P] [Foundation] `infra/systemd/ymg-stack.service`: `ExecStart=docker compose up -d backend frontend postgres`、 `Restart=on-failure`
+- [x] T063 [P] [Foundation] `infra/systemd/ymg-backup.service` + `ymg-backup.timer`: 日次 03:00 で `infra/scripts/backup.sh` 実行(ADR-0026)
 
 ### Frontend スケルトン
 
-- [ ] T064 [P] [Foundation] frontend `frontend/app/layout.tsx` + `frontend/app/(admin)/layout.tsx`: shadcn/ui 適用、 ナビゲーション(Plans / Posts / Dryrun / Scheduler / Analytics / Prompts / LLM)
-- [ ] T065 [P] [Foundation] frontend `frontend/lib/auth.ts`: Basic 認証ヘッダー注入の fetch wrapper
-- [ ] T066 [P] [Foundation] frontend `frontend/lib/api/` + `package.json` script で `openapi-typescript ./contracts/backend-api.yaml -o lib/api/schema.ts` を実行できるよう設定
-- [ ] T067 [P] [Foundation] frontend `frontend/app/(admin)/page.tsx`: ダッシュボードホーム(scheduler 状態 + 直近 jobs 件数 + LLM provider 表示)
-- [ ] T068 [P] [Foundation] frontend `frontend/lib/api/health.ts` + ダッシュボードで backend `/health` を表示
+- [x] T064 [P] [Foundation] frontend `frontend/app/layout.tsx` + `frontend/app/(admin)/layout.tsx`: shadcn/ui 適用、 ナビゲーション(Plans / Posts / Dryrun / Scheduler / Analytics / Prompts / LLM)
+- [x] T065 [P] [Foundation] frontend `frontend/lib/auth.ts`: Basic 認証ヘッダー注入の fetch wrapper
+- [x] T066 [P] [Foundation] frontend `frontend/lib/api/` + `package.json` script で `openapi-typescript ./contracts/backend-api.yaml -o lib/api/schema.ts` を実行できるよう設定
+- [x] T067 [P] [Foundation] frontend `frontend/app/(admin)/page.tsx`: ダッシュボードホーム(scheduler 状態 + 直近 jobs 件数 + LLM provider 表示)
+- [x] T068 [P] [Foundation] frontend `frontend/lib/api/health.ts` + ダッシュボードで backend `/health` を表示
 
 ### Compliance: containsSyntheticMedia バリデーション(US1 で消費)
 
-- [ ] T069 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_compliance_validation.py`: `containsSyntheticMedia=true` 設定が無い post を投稿しようとすると `compliance` 例外 + 投稿停止 + Slack 通知 + audit_log を 100% カバー
-- [ ] T070 [Foundation] backend `backend/src/ymg_backend/domain/compliance/validators.py` を T069 で driven 実装
+- [x] T069 [P] [Foundation] **TEST FIRST** `backend/tests/critical/test_compliance_validation.py`: `containsSyntheticMedia=true` 設定が無い post を投稿しようとすると `compliance` 例外 + 投稿停止 + Slack 通知 + audit_log を 100% カバー
+- [x] T070 [Foundation] backend `backend/src/ymg_backend/domain/compliance/validators.py` を T069 で driven 実装
 
 **Checkpoint**: Foundation 完了 — 全 US の並列実装が可能
 

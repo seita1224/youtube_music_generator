@@ -1,0 +1,14 @@
+{
+  "$comment": "ADR-0034 (3): genre badge spec for the Pillow overlay. Top-left, small, semi-transparent rounded rectangle showing the genre English name (4-12 chars). Background fill color is per-genre (genre YAML 'genre_badge_color'); geometry, opacity, and text color here are shared. Coordinates are absolute pixels on the 1280x720 canvas, origin top-left.",
+  "text_source": "genre_display",
+  "max_chars": 12,
+  "position": { "x": 48, "y": 48 },
+  "padding": { "x": 24, "y": 12 },
+  "corner_radius": 12,
+  "font_role": "primary",
+  "font_size": 40,
+  "text_color": "#FFFFFF",
+  "background_opacity": 0.6,
+  "default_background_color": "#1A1A1A",
+  "anchor": "la"
+}
