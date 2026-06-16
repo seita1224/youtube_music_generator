@@ -26,6 +26,23 @@ export interface DryrunOutput {
   // posted_at / auto_expired_at は contracts schema 未掲載のため任意拡張に留める。
   readonly posted_at?: string; // date-time
   readonly auto_expired_at?: string; // date-time
+  // 一覧の可読性向上(US2 改善): 対応 Post のタイトルとサムネ有無を join で受け取る。
+  readonly title?: string | null;
+  readonly has_thumbnail?: boolean;
+}
+
+// 保護メディア(動画/サムネ)は Basic 認証必須。 frontend ページ自体は認証下に無く
+// ブラウザは資格情報を持たないため、 素の <img>/<video src> は 401 になる。 そこで
+// 下記 backend パスを authFetch で取得し blob URL 化して使う(useAuthedBlobUrl)。
+
+/** dryrun サムネ画像の backend パス(authFetch で取得する)。 */
+export function dryrunThumbnailPath(id: string): string {
+  return `/dryrun/outputs/${id}/thumbnail`;
+}
+
+/** dryrun プレビュー動画の backend パス(authFetch で取得する)。 */
+export function dryrunVideoPath(id: string): string {
+  return `/dryrun/outputs/${id}/video`;
 }
 
 export interface DryrunListResponse {

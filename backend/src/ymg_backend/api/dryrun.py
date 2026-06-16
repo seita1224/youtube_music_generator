@@ -47,7 +47,7 @@ from ymg_backend.domain.dryrun.service import (
     DryrunService,
     DryrunStateConflictError,
 )
-from ymg_backend.infrastructure.db.models import DryrunOutput
+from ymg_backend.infrastructure.db.models import DryrunOutput, Post
 from ymg_backend.infrastructure.db.session import get_session
 from ymg_backend.infrastructure.storage.fsspec_wrapper import StorageAdapter
 from ymg_backend.infrastructure.youtube.oauth import YouTubeOAuth
@@ -68,6 +68,7 @@ _NO_VIDEO_STATES: Final[frozenset[str]] = frozenset({"rejected", "auto_expired"}
 _LIST_LIMIT: Final[int] = 100
 
 _VIDEO_MEDIA_TYPE: Final[str] = "video/mp4"
+_THUMBNAIL_MEDIA_TYPE: Final[str] = "image/jpeg"
 
 
 class DryrunOutputResponse(BaseModel):
@@ -82,6 +83,10 @@ class DryrunOutputResponse(BaseModel):
     reject_reason: str | None = None
     created_at: datetime
     reviewed_at: datetime | None = None
+    # 一覧の可読性向上 (US2 改善): 対応 Post のタイトルとサムネ有無。 一覧 endpoint は
+    # join して埋める。 approve/reject の単票応答では Post を引かないため既定 (None/False)。
+    title: str | None = None
+    has_thumbnail: bool = False
 
 
 class DryrunListResponse(BaseModel):
@@ -139,15 +144,25 @@ async def list_dryrun_outputs(
     session: Annotated[AsyncSession, Depends(get_session)],
     state: Annotated[DryrunState | None, Query()] = None,
 ) -> DryrunListResponse:
-    """dryrun 成果物の一覧を ``state`` で絞り込んで返す (新しい順)。"""
+    """dryrun 成果物の一覧を ``state`` で絞り込んで返す (新しい順)。
+
+    一覧の可読性のため対応 ``Post`` を join し、 ``title`` (final_title) と
+    ``has_thumbnail`` (thumbnail_uri の有無) を埋める。 これで UI が UUID でなく
+    タイトル + サムネで識別できる (US2 改善)。
+    """
     del user  # 認証のみ目的。
-    stmt = select(DryrunOutput)
+    stmt = select(DryrunOutput, Post.final_title, Post.thumbnail_uri).join(
+        Post, Post.id == DryrunOutput.post_id
+    )
     if state is not None:
         stmt = stmt.where(DryrunOutput.state == state)
     stmt = stmt.order_by(DryrunOutput.created_at.desc()).limit(_LIST_LIMIT)
 
-    rows = (await session.execute(stmt)).scalars().all()
-    return DryrunListResponse(items=[DryrunOutputResponse.model_validate(row) for row in rows])
+    items = [
+        _to_response(row, title=title, thumbnail_uri=thumbnail_uri)
+        for row, title, thumbnail_uri in (await session.execute(stmt)).all()
+    ]
+    return DryrunListResponse(items=items)
 
 
 @router.post(
@@ -234,13 +249,70 @@ async def get_dryrun_video(
             detail=f"video object for dryrun output {output_id} is missing",
         )
 
-    stream = _stream_video(storage, output.video_uri)
+    stream = _stream_file(storage, output.video_uri)
     return StreamingResponse(stream, media_type=_VIDEO_MEDIA_TYPE)
 
 
+@router.get(
+    "/outputs/{output_id}/thumbnail",
+    summary="Stream dryrun thumbnail image",
+    response_class=StreamingResponse,
+    responses={
+        200: {"content": {_THUMBNAIL_MEDIA_TYPE: {}}, "description": "Thumbnail byte stream."},
+        404: {"description": "dryrun output / post / thumbnail object not found."},
+    },
+)
+async def get_dryrun_thumbnail(
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    storage: Annotated[StorageAdapter, Depends(get_storage_adapter)],
+    output_id: uuid.UUID,
+) -> StreamingResponse:
+    """対応 ``Post`` のサムネ画像をストリームする (一覧/詳細プレビュー用)。
+
+    404: 成果物 / Post / thumbnail_uri が無い、 またはオブジェクト消失。 サムネは却下後も
+    残置されうるが、 無ければ 404 を返し UI 側でプレースホルダにフォールバックさせる。
+    """
+    del user
+    output = await session.get(DryrunOutput, output_id)
+    if output is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"dryrun output {output_id} not found",
+        )
+    post = await session.get(Post, output.post_id)
+    thumbnail_uri = post.thumbnail_uri if post is not None else None
+    if not thumbnail_uri or not storage.exists(thumbnail_uri):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"thumbnail for dryrun output {output_id} is missing",
+        )
+
+    stream = _stream_file(storage, thumbnail_uri)
+    return StreamingResponse(stream, media_type=_THUMBNAIL_MEDIA_TYPE)
+
+
 # ---------------------------------------------------------------------------------
-# 内部ヘルパ (例外写像 / ストリーミング)
+# 内部ヘルパ (応答変換 / 例外写像 / ストリーミング)
 # ---------------------------------------------------------------------------------
+def _to_response(
+    output: DryrunOutput,
+    *,
+    title: str | None = None,
+    thumbnail_uri: str | None = None,
+) -> DryrunOutputResponse:
+    """``DryrunOutput`` 行を応答 DTO へ変換する。
+
+    ``title`` / ``thumbnail_uri`` は一覧 endpoint が ``Post`` を join して渡す (任意)。
+    state(enum str)→Literal の変換は ``model_validate`` に委ね、 join 由来の 2 項目だけ
+    後付けする。
+    """
+    resp = DryrunOutputResponse.model_validate(output)
+    resp.title = title
+    resp.has_thumbnail = thumbnail_uri is not None
+    return resp
+
+
 async def _approve(
     service: DryrunService,
     session: AsyncSession,
@@ -274,14 +346,14 @@ async def _reject(
         ) from exc
 
 
-async def _stream_video(storage: StorageAdapter, video_uri: str) -> AsyncIterator[bytes]:
-    """動画ファイルを固定チャンクで読み出す async generator。
+async def _stream_file(storage: StorageAdapter, uri: str) -> AsyncIterator[bytes]:
+    """ファイルを固定チャンクで読み出す async generator (動画/サムネ共用)。
 
     ``StorageAdapter.open`` の同期ハンドルを ``with`` で確実にクローズしつつ、 1MiB ずつ
     yield する。 全読み込み (``read_bytes``) を避けてメモリ常駐を抑える。
     """
     handle: IO[Any]
-    with storage.open(video_uri, "rb") as handle:
+    with storage.open(uri, "rb") as handle:
         for chunk in _iter_chunks(handle):
             yield chunk
 

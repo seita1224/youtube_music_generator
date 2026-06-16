@@ -20,11 +20,13 @@ import {
 } from "@/components/ui/dialog";
 import {
   approveDryrun,
+  dryrunVideoPath,
   listDryrunOutputs,
   rejectDryrun,
   type DryrunOutput,
   type DryrunState,
 } from "@/lib/api/dryrun";
+import { useAuthedBlobUrl } from "@/lib/api/use-authed-blob-url";
 
 // T098: dryrun 詳細画面(screen-spec.md §2 / US2)。
 // 動画プレビュー + メタ情報 + 承認(承認して投稿)/ 却下(理由必須 min4)操作。
@@ -116,6 +118,15 @@ export default function DryrunDetailPage(): React.JSX.Element {
   const isPending = output?.state === "pending";
   const mutating = approveMutation.isPending || rejectMutation.isPending;
 
+  // 動画は Basic 認証必須のため authFetch→blob で取得(素の <video src> は 401)。
+  // 削除済み state(却下/期限切れ)は配信不可なので取得しない。 hooks 規則のため
+  // 早期 return より前で無条件に呼ぶ(path=null の間は取得しない)。
+  const videoServable =
+    output != null && output.state !== "rejected" && output.state !== "auto_expired";
+  const videoSrc = useAuthedBlobUrl(
+    videoServable && output != null ? dryrunVideoPath(output.id) : null,
+  );
+
   if (query.isLoading) {
     return (
       <div className="flex flex-col gap-6">
@@ -161,6 +172,11 @@ export default function DryrunDetailPage(): React.JSX.Element {
         </Badge>
       </div>
 
+      {/* タイトル優先表示(UUID より識別しやすい)。 未設定時は出力 ID にフォールバック。 */}
+      <h1 className="text-xl font-semibold text-slate-100">
+        {output.title ?? output.id}
+      </h1>
+
       <Card>
         <CardHeader>
           <CardTitle>動画プレビュー</CardTitle>
@@ -170,7 +186,7 @@ export default function DryrunDetailPage(): React.JSX.Element {
               (authFetch は経由しない)。 rejected / auto_expired は配信不可(409)。 */}
           <video
             data-testid="dryrun-video"
-            src={`/api/backend/dryrun/outputs/${output.id}/video`}
+            src={videoSrc ?? undefined}
             controls
             className="w-full aspect-video rounded-lg border border-white/10 bg-black"
           />

@@ -16,10 +16,7 @@ export default function AdminLayout({
       <div className="min-h-screen">
         <Sidebar />
         <div className="pl-[260px]">
-          <Header
-            title="ダッシュボード"
-            subtitle="YouTube 音楽投稿自動化システムの横断的な状態確認"
-          />
+          <Header />
           <main className="p-6">{children}</main>
         </div>
       </div>

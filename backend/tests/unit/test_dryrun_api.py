@@ -55,17 +55,28 @@ class _FakeOutput:
     reviewed_at: datetime | None = None
     auto_expired_at: datetime | None = None
     posted_at: datetime | None = None
+    # 一覧 join 由来(Post.final_title / Post.thumbnail_uri 相当)。
+    final_title: str | None = None
+    thumbnail_uri: str | None = None
 
 
 class _FakeResult:
-    def __init__(self, rows: list[_FakeOutput]) -> None:
+    def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
 
     def scalars(self) -> _FakeResult:
         return self
 
-    def all(self) -> list[_FakeOutput]:
+    def all(self) -> list[Any]:
         return list(self._rows)
+
+
+@dataclass
+class _FakePost:
+    """ORM ``Post`` の最小スタンドイン (サムネ endpoint の thumbnail_uri 解決用)。"""
+
+    id: uuid.UUID
+    thumbnail_uri: str | None = None
 
 
 @dataclass
@@ -73,9 +84,12 @@ class _FakeSession:
     """``get`` / ``execute`` / ``commit`` のみ持つ in-memory セッション。"""
 
     rows: list[_FakeOutput] = field(default_factory=list)
+    posts: dict[uuid.UUID, _FakePost] = field(default_factory=dict)
     commits: int = 0
 
-    async def get(self, _model: Any, pk: uuid.UUID) -> _FakeOutput | None:
+    async def get(self, model: Any, pk: uuid.UUID) -> Any:
+        if getattr(model, "__name__", "") == "Post":
+            return self.posts.get(pk)
         return next((r for r in self.rows if r.id == pk), None)
 
     async def execute(self, statement: Any) -> _FakeResult:
@@ -86,7 +100,9 @@ class _FakeSession:
         if state_vals:
             rows = [r for r in rows if r.state in state_vals]
         rows.sort(key=lambda r: r.created_at, reverse=True)
-        return _FakeResult(rows)
+        # 一覧 endpoint は (DryrunOutput, Post.final_title, Post.thumbnail_uri) の
+        # 3 タプルを join で受け取るため、 fake もタプルで返す。
+        return _FakeResult([(r, r.final_title, r.thumbnail_uri) for r in rows])
 
     async def commit(self) -> None:
         self.commits += 1
@@ -202,7 +218,9 @@ def test_requires_auth() -> None:
 
 
 def test_list_returns_items_and_filters_by_state() -> None:
-    pending = _make_output(state="pending")
+    pending = _make_output(
+        state="pending", final_title="雨夜の Lo-Fi", thumbnail_uri="file:///t/thumb.jpg"
+    )
     posted = _make_output(state="posted")
     session = _FakeSession(rows=[pending, posted])
     client = _build_client(session)
@@ -216,6 +234,22 @@ def test_list_returns_items_and_filters_by_state() -> None:
     items = filtered.json()["items"]
     assert len(items) == 1
     assert items[0]["state"] == "pending"
+    # US2 改善: join した title / has_thumbnail が反映される。
+    assert items[0]["title"] == "雨夜の Lo-Fi"
+    assert items[0]["has_thumbnail"] is True
+
+
+def test_list_item_without_post_metadata_defaults() -> None:
+    """final_title / thumbnail_uri が無い post は title=None / has_thumbnail=False。"""
+    bare = _make_output(state="pending")
+    session = _FakeSession(rows=[bare])
+    client = _build_client(session)
+
+    resp = client.get("/dryrun/outputs", auth=_AUTH)
+    assert resp.status_code == 200
+    item = resp.json()["items"][0]
+    assert item["title"] is None
+    assert item["has_thumbnail"] is False
 
 
 # --- approve ----------------------------------------------------------------------
@@ -331,4 +365,40 @@ def test_video_404_when_object_missing() -> None:
     client = _build_client(session, storage=storage)
 
     resp = client.get(f"/dryrun/outputs/{output.id}/video", auth=_AUTH)
+    assert resp.status_code == 404
+
+
+# --- thumbnail --------------------------------------------------------------------
+
+
+def test_thumbnail_streams_image_jpeg() -> None:
+    output = _make_output(state="pending")
+    post = _FakePost(id=output.post_id, thumbnail_uri="file:///t/thumb.jpg")
+    session = _FakeSession(rows=[output], posts={post.id: post})
+    storage = _FakeStorage(data=b"JPEGDATA", existing=True)
+    client = _build_client(session, storage=storage)
+
+    resp = client.get(f"/dryrun/outputs/{output.id}/thumbnail", auth=_AUTH)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert resp.content == b"JPEGDATA"
+
+
+def test_thumbnail_404_when_post_has_no_thumbnail() -> None:
+    output = _make_output(state="pending")
+    post = _FakePost(id=output.post_id, thumbnail_uri=None)
+    session = _FakeSession(rows=[output], posts={post.id: post})
+    storage = _FakeStorage(existing=True)
+    client = _build_client(session, storage=storage)
+
+    resp = client.get(f"/dryrun/outputs/{output.id}/thumbnail", auth=_AUTH)
+    assert resp.status_code == 404
+
+
+def test_thumbnail_404_when_output_missing() -> None:
+    session = _FakeSession()
+    storage = _FakeStorage(existing=True)
+    client = _build_client(session, storage=storage)
+
+    resp = client.get(f"/dryrun/outputs/{uuid.uuid4()}/thumbnail", auth=_AUTH)
     assert resp.status_code == 404

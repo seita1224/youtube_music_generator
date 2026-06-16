@@ -278,6 +278,32 @@ paths:
           description: >-
             動画がもう存在しない state (rejected / auto_expired) で配信不可。
 
+  /dryrun/outputs/{id}/thumbnail:
+    get:
+      summary: Stream dryrun thumbnail image (for list/detail preview)
+      description: >-
+        対応 Post の thumbnail_uri を StorageAdapter.open でチャンク読みし
+        StreamingResponse (image/jpeg) で返す。 一覧/詳細の <img> から同一オリジン
+        proxied パスで参照される (Basic 認証はブラウザセッションに従う)。
+      operationId: getDryrunThumbnail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: サムネイル画像バイトストリーム。
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: dryrun output / Post / thumbnail_uri が存在しない、 またはオブジェクトが無い。
+
   /scheduler:
     get:
       summary: Get scheduler enabled state
@@ -659,6 +685,13 @@ components:
         reviewed_at:
           type: string
           format: date-time
+        title:
+          type: string
+          nullable: true
+          description: 対応 Post の final_title (一覧の可読性向上のため join)。 未生成は null。
+        has_thumbnail:
+          type: boolean
+          description: 対応 Post に thumbnail_uri がある場合 true (一覧/詳細でサムネ表示可)。
 
     SchedulerState:
       type: object

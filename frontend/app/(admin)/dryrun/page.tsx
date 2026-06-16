@@ -8,11 +8,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  dryrunThumbnailPath,
   listDryrunOutputs,
   type DryrunListResponse,
   type DryrunOutput,
   type DryrunState,
 } from "@/lib/api/dryrun";
+import { useAuthedBlobUrl } from "@/lib/api/use-authed-blob-url";
 
 // T097: dryrun 一覧画面(screen-spec.md §2 ③ / UI 契約)。
 // 状態タブで pending 等を切替し、 各 dryrun を card で並べる。
@@ -127,6 +129,10 @@ export default function DryrunListPage(): React.JSX.Element {
 }
 
 function DryrunCard({ item }: { readonly item: DryrunOutput }): React.JSX.Element {
+  // サムネは Basic 認証必須のため authFetch→blob で取得(素の <img src> は 401)。
+  const thumbUrl = useAuthedBlobUrl(
+    item.has_thumbnail ? dryrunThumbnailPath(item.id) : null,
+  );
   return (
     <a
       href={`/dryrun/${item.id}`}
@@ -134,19 +140,17 @@ function DryrunCard({ item }: { readonly item: DryrunOutput }): React.JSX.Elemen
       className="group block rounded-xl outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary"
     >
       <Card className="overflow-hidden transition-colors group-hover:border-primary/40">
-        {/* サムネ枠: 専用サムネ API は未契約のため、 動画の 1 フレームを poster なしで縮小表示。
-            同一オリジン proxied パスでブラウザ Basic 認証セッションを利用する。 */}
+        {/* サムネ枠: 認証付き取得できたら JPEG を表示。 取得前/未生成/削除済みは Film アイコン。 */}
         <div className="relative flex aspect-video items-center justify-center border-b border-white/10 bg-black/40">
-          {item.state === "rejected" || item.state === "auto_expired" ? (
-            <Film className="h-8 w-8 text-slate-600" aria-hidden="true" />
-          ) : (
-            <video
-              src={`/api/backend/dryrun/outputs/${item.id}/video`}
-              preload="metadata"
-              muted
-              playsInline
+          {thumbUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- 認証付き blob URL のため next/image 非対応
+            <img
+              src={thumbUrl}
+              alt={item.title ?? "dryrun サムネイル"}
               className="h-full w-full object-cover"
             />
+          ) : (
+            <Film className="h-8 w-8 text-slate-600" aria-hidden="true" />
           )}
         </div>
         <CardContent className="flex flex-col gap-2 p-4">
@@ -164,9 +168,18 @@ function DryrunCard({ item }: { readonly item: DryrunOutput }): React.JSX.Elemen
               {formatDateTime(item.created_at)}
             </time>
           </div>
-          <p className="truncate font-mono text-xs text-slate-500" title={item.id}>
-            {item.id}
+          {/* タイトル優先表示(UUID は識別しづらいため)。 未設定時は ID にフォールバック。 */}
+          <p
+            className="truncate text-sm font-medium text-slate-200"
+            title={item.title ?? item.id}
+          >
+            {item.title ?? item.id}
           </p>
+          {item.title ? (
+            <p className="truncate font-mono text-xs text-slate-500" title={item.id}>
+              {item.id}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </a>
