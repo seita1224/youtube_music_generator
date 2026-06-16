@@ -15,16 +15,26 @@ from ymg_gpu_worker.api.schemas import ImageGenerateRequest, MusicGenerateReques
 from ymg_gpu_worker.infrastructure.storage import StorageAdapter
 from ymg_gpu_worker.jobs.queue import JobKind, JobQueue, JobRequest, JobResult
 from ymg_gpu_worker.runners.acestep import AceStepRunner
+from ymg_gpu_worker.runners.dummy import DummyRunner
 from ymg_gpu_worker.runners.sdxl import SdxlRunner
+from ymg_gpu_worker.settings import dummy_mode_enabled
 
 
 class WorkerRuntime:
-    """job キューと各ランナーを束ねるランタイム。"""
+    """job キューと各ランナーを束ねるランタイム。
 
-    __slots__ = ("_acestep", "_queue", "_sdxl", "_storage")
+    ``GPU_WORKER_DUMMY=1`` のときは ``DummyRunner`` へ振り分け、 torch / CUDA を
+    一切 import せずに決定論的なダミー素材を返す (ADR-0031)。 実ランナー
+    (ACE-Step / SDXL) は遅延 import のまま温存する。
+    """
+
+    __slots__ = ("_acestep", "_dummy", "_queue", "_sdxl", "_storage")
 
     def __init__(self, storage: StorageAdapter) -> None:
         self._storage: Final[StorageAdapter] = storage
+        self._dummy: Final[DummyRunner | None] = (
+            DummyRunner(storage) if dummy_mode_enabled() else None
+        )
         self._acestep: Final[AceStepRunner] = AceStepRunner(storage)
         self._sdxl: Final[SdxlRunner] = SdxlRunner(storage)
         self._queue: Final[JobQueue] = JobQueue(self._dispatch)
@@ -36,6 +46,8 @@ class WorkerRuntime:
 
     def models_loaded(self) -> list[str]:
         """ロード済みモデルの識別子一覧 (``/health`` 用)。"""
+        if self._dummy is not None:
+            return [self._dummy.model_name]
         loaded: list[str] = []
         if self._acestep.is_loaded:
             loaded.append(self._acestep.model_name)
@@ -53,8 +65,14 @@ class WorkerRuntime:
         await self._queue.stop()
 
     async def _dispatch(self, kind: JobKind, request: JobRequest) -> JobResult:
-        """job をランナーへ振り分ける。 同期処理は executor に逃がす。"""
+        """job をランナーへ振り分ける。 同期処理は executor に逃がす。
+
+        ダミーモード時は実ランナー (torch を遅延 import する) に触れる前に
+        ``DummyRunner`` へ分岐する。
+        """
         loop = asyncio.get_running_loop()
+        if self._dummy is not None:
+            return await loop.run_in_executor(None, self._dummy.generate, kind, request)
         if kind is JobKind.MUSIC:
             assert isinstance(request, MusicGenerateRequest)
             return await loop.run_in_executor(None, self._acestep.generate, request)

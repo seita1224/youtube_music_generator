@@ -41,6 +41,9 @@ from starlette.types import Lifespan
 
 from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
+from ymg_backend.api.plans import router as plans_router
+from ymg_backend.api.posts import router as posts_router
+from ymg_backend.api.scheduler import router as scheduler_router
 from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.logging import setup_logging
 from ymg_backend.core.security import require_basic_auth
@@ -103,6 +106,12 @@ def _build_lifespan(settings: Settings) -> Lifespan[FastAPI]:
         # scheduler 起動準備: instance のみ構築。 job 登録は T087 の責務。
         scheduler = _build_scheduler()
         app.state.scheduler = scheduler
+        # NOTE: ``SchedulerService`` (job 出し入れ) の注入は別途の合成ルート (composition
+        # root) タスクが担う。 ``DailyCycleOrchestrator`` の組み立てに planner/music/
+        # uploader 等 10 サービスの構築を要し、 本配線タスク (router include) の範囲外。
+        # 未注入でも ``PUT /scheduler`` は ``getattr(app.state, "scheduler_service", None)``
+        # で best-effort に degrade する (フラグ永続化 + audit は実行、 job 操作のみ skip)。
+        # 注入時は ``app.state.scheduler_service = SchedulerService(scheduler, cycle_runner=…)``。
 
         # ADR-0031: reboot 後は false 起動が既定。 enabled のときだけ start する。
         scheduler_enabled = await _read_scheduler_enabled()
@@ -160,10 +169,14 @@ def _build_protected_router() -> APIRouter:
     """Basic 認証を全 endpoint に適用する親ルータを返す (ADR-0013)。
 
     ``dependencies=[Depends(require_basic_auth)]`` を親に付けることで、 配下の
-    全ルータ・全 endpoint に認証が効く。 後続タスクのルータはここに
-    ``router.include_router(...)`` で追加する。
+    全ルータ・全 endpoint に認証が効く。 業務ルータ (plans / posts / scheduler)
+    はここに ``router.include_router(...)`` で追加する。 子ルータ側には認証依存を
+    再付与しない (共有契約 (c): 認証は親が付与)。
     """
     router = APIRouter(dependencies=[Depends(require_basic_auth)])
+    router.include_router(plans_router)
+    router.include_router(posts_router)
+    router.include_router(scheduler_router)
     return router
 
 

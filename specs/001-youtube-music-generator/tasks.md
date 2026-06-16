@@ -174,53 +174,53 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Tests for User Story 1(critical path test-first)
 
-- [ ] T071 [P] [US1] **TEST FIRST** `backend/tests/critical/test_acoustid_precheck.py`: AcoustID API mock(respx)で clear / hit / api_error の各レスポンスに対する prechecker の挙動を 100% カバー
-- [ ] T072 [P] [US1] **TEST FIRST** `backend/tests/integration/test_daily_cycle_pipeline.py`: GPU worker mock + youtube mock で日次サイクル E2E(plan → music × 6 → AcoustID → image → video → upload)を流す
-- [ ] T073 [P] [US1] **TEST FIRST** `backend/tests/critical/test_planner_schema.py`: 改善計画 LLM 出力が DailyPlan スキーマで validation される / 辞書外ジャンル拒否 / `posts` 1〜2 制約 / rationale min_length を 100% カバー
+- [x] T071 [P] [US1] **TEST FIRST** `backend/tests/critical/test_acoustid_precheck.py`: AcoustID API mock(respx)で clear / hit / api_error の各レスポンスに対する prechecker の挙動を 100% カバー
+- [x] T072 [P] [US1] **TEST FIRST** `backend/tests/integration/test_daily_cycle_pipeline.py`: GPU worker mock + youtube mock で日次サイクル E2E(plan → music × 6 → AcoustID → image → video → upload)を流す
+- [x] T073 [P] [US1] **TEST FIRST** `backend/tests/critical/test_planner_schema.py`: 改善計画 LLM 出力が DailyPlan スキーマで validation される / 辞書外ジャンル拒否 / `posts` 1〜2 制約 / rationale min_length を 100% カバー
 
 ### 改善計画 LLM 呼び出し
 
-- [ ] T074 [P] [US1] backend `backend/src/ymg_backend/domain/plans/planner.py`: System prompt(prompt_loader)+ User prompt(集計サマリ + 履歴)+ LlmProvider 呼び出し + plan_metric_snapshot 書き込み + plans 永続化
-- [ ] T075 [P] [US1] backend `backend/src/ymg_backend/domain/plans/finisher.py`: directive parser で抽出した `{{自由文}}` 単位に Haiku 級 LLM を呼ぶ仕上げサービス
-- [ ] T076 [US1] backend `backend/src/ymg_backend/api/plans.py`: `GET /plans` + `POST /plans`(cycle/target_date 指定で planner 起動)+ `POST /plans/{id}/approve`(contracts/backend-api.yaml 準拠)
+- [x] T074 [P] [US1] backend `backend/src/ymg_backend/domain/plans/planner.py`: System prompt(prompt_loader)+ User prompt(集計サマリ + 履歴)+ LlmProvider 呼び出し + plan_metric_snapshot 書き込み + plans 永続化
+- [x] T075 [P] [US1] backend `backend/src/ymg_backend/domain/plans/finisher.py`: directive parser で抽出した `{{自由文}}` 単位に Haiku 級 LLM を呼ぶ仕上げサービス
+- [x] T076 [US1] backend `backend/src/ymg_backend/api/plans.py`: `GET /plans` + `POST /plans`(cycle/target_date 指定で planner 起動)+ `POST /plans/{id}/approve`(contracts/backend-api.yaml 準拠)
 
 ### 音楽生成パイプライン
 
-- [ ] T077 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/music_jobs.py`: 1 post = 6 tracks の job dispatcher、 gpu_worker_client 経由で `POST /generate/music` × 6、 `gpu_jobs` 永続化、 完了ポーリング
-- [ ] T078 [P] [US1] backend `backend/src/ymg_backend/domain/compliance/acoustid.py`: pyacoustid + Chromaprint で 6 track 並列チェック、 fingerprint を `audio_tracks` に記録、 hit 時は単独 re-gen request、 連続 3 回 hit でジャンル一時停止(FR-010, FR-011, FR-012)
+- [x] T077 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/music_jobs.py`: 1 post = 6 tracks の job dispatcher、 gpu_worker_client 経由で `POST /generate/music` × 6、 `gpu_jobs` 永続化、 完了ポーリング
+- [x] T078 [P] [US1] backend `backend/src/ymg_backend/domain/compliance/acoustid.py`: pyacoustid + Chromaprint で 6 track 並列チェック、 fingerprint を `audio_tracks` に記録、 hit 時は単独 re-gen request、 連続 3 回 hit でジャンル一時停止(FR-010, FR-011, FR-012)
 
 ### サムネ / ビジュアル生成
 
-- [ ] T079 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/image_jobs.py`: gpu_worker `POST /generate/image` 呼び出し、 SDXL 背景画像取得、 thumbnail_uri を `posts` に保存
-- [ ] T080 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/thumbnail_overlay.py`: Pillow で SDXL 背景にジャンル別 YAML(`templates/thumbnail/*.yaml`)に従ってテキストオーバーレイ + バッジ合成、 出力 JPEG quality 90、 YouTube 2MB 制限内
+- [x] T079 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/image_jobs.py`: gpu_worker `POST /generate/image` 呼び出し、 SDXL 背景画像取得、 thumbnail_uri を `posts` に保存
+- [x] T080 [P] [US1] backend `backend/src/ymg_backend/domain/pipeline/thumbnail_overlay.py`: Pillow で SDXL 背景にジャンル別 YAML(`templates/thumbnail/*.yaml`)に従ってテキストオーバーレイ + バッジ合成、 出力 JPEG quality 90、 YouTube 2MB 制限内
 
 ### ffmpeg 動画合成
 
-- [ ] T081 [US1] backend `backend/src/ymg_backend/domain/pipeline/video_compose.py`: 6 トラックを `ffmpeg acrossfade 3〜5秒` で連結 → SDXL 背景 + `showwaves` overlay を audio に重ねて 30 分 mp4 を生成(ADR-0003, ADR-0015)
+- [x] T081 [US1] backend `backend/src/ymg_backend/domain/pipeline/video_compose.py`: 6 トラックを `ffmpeg acrossfade 3〜5秒` で連結 → SDXL 背景 + `showwaves` overlay を audio に重ねて 30 分 mp4 を生成(ADR-0003, ADR-0015)
 
 ### タイトル / 説明文レンダリング
 
-- [ ] T082 [P] [US1] backend `backend/src/ymg_backend/domain/render/title.py`: ジャンル YAML テンプレ + directive parser + finisher LLM で `final_title` 生成(FR-051、 60 字制約検証)
-- [ ] T083 [P] [US1] backend `backend/src/ymg_backend/domain/render/description.py`: default テンプレ + chapters 動的生成(6 トラックタイトル英 + 日)+ 静的 AI 開示固定文 + ハッシュタグ 3 個で `final_description` 生成(FR-052, FR-053)
+- [x] T082 [P] [US1] backend `backend/src/ymg_backend/domain/render/title.py`: ジャンル YAML テンプレ + directive parser + finisher LLM で `final_title` 生成(FR-051、 60 字制約検証)
+- [x] T083 [P] [US1] backend `backend/src/ymg_backend/domain/render/description.py`: default テンプレ + chapters 動的生成(6 トラックタイトル英 + 日)+ 静的 AI 開示固定文 + ハッシュタグ 3 個で `final_description` 生成(FR-052, FR-053)
 
 ### YouTube アップローダ + Compliance ゲート
 
-- [ ] T084 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/uploader.py`: google-api-python-client で `videos.insert`、 `status.containsSyntheticMedia=true` 必須セット、 OAuth トークンを `oauth_credentials` から Fernet 復号して使用(FR-006, FR-007, FR-100)
-- [ ] T085 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/oauth.py`: refresh token 経由のアクセストークン取得、 期限切れ前自動 refresh、 一度きりの OAuth flow 用 CLI(`make youtube-auth`)
-- [ ] T086 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/compliance_gate.py`: アップロード直前に T070 のバリデータを必ず通す(`compliance` ガードレイヤ)
+- [x] T084 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/uploader.py`: google-api-python-client で `videos.insert`、 `status.containsSyntheticMedia=true` 必須セット、 OAuth トークンを `oauth_credentials` から Fernet 復号して使用(FR-006, FR-007, FR-100)
+- [x] T085 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/oauth.py`: refresh token 経由のアクセストークン取得、 期限切れ前自動 refresh、 一度きりの OAuth flow 用 CLI(`make youtube-auth`)
+- [x] T086 [US1] backend `backend/src/ymg_backend/infrastructure/youtube/compliance_gate.py`: アップロード直前に T070 のバリデータを必ず通す(`compliance` ガードレイヤ)
 
 ### 日次スケジューラ
 
-- [ ] T087 [US1] backend `backend/src/ymg_backend/infrastructure/scheduler.py`: APScheduler AsyncIOScheduler、 `app_state.scheduler_enabled=true` でのみ jobs を add、 日次 cron(JST 朝 / 夕実行可能な 2 slot)+ post 実行 job(plan → pipeline → upload)
-- [ ] T088 [US1] backend `backend/src/ymg_backend/api/scheduler.py`: `GET/PUT /scheduler`、 `PUT /scheduler` で `enabled` 切替時に audit_log + scheduler add/remove + dryrun→投稿モード切替時の audit 記録(ADR-0035)
+- [x] T087 [US1] backend `backend/src/ymg_backend/infrastructure/scheduler.py`: APScheduler AsyncIOScheduler、 `app_state.scheduler_enabled=true` でのみ jobs を add、 日次 cron(JST 朝 / 夕実行可能な 2 slot)+ post 実行 job(plan → pipeline → upload)
+- [x] T088 [US1] backend `backend/src/ymg_backend/api/scheduler.py`: `GET/PUT /scheduler`、 `PUT /scheduler` で `enabled` 切替時に audit_log + scheduler add/remove + dryrun→投稿モード切替時の audit 記録(ADR-0035)
 
 ### Posts API + Retry
 
-- [ ] T089 [P] [US1] backend `backend/src/ymg_backend/api/posts.py`: `GET /posts` + `GET /posts/{id}` + `POST /posts/{id}/retry`(失敗 post の再実行 / 初回手動 1 本投稿時にも使う、 ADR-0035)
+- [x] T089 [P] [US1] backend `backend/src/ymg_backend/api/posts.py`: `GET /posts` + `GET /posts/{id}` + `POST /posts/{id}/retry`(失敗 post の再実行 / 初回手動 1 本投稿時にも使う、 ADR-0035)
 
 ### Slack 通知
 
-- [ ] T090 [P] [US1] backend `backend/src/ymg_backend/infrastructure/slack/notifier.py`: 単一 webhook、 メッセージ冒頭にカテゴリ prefix `[FATAL]/[COMPLIANCE]/[TRANSIENT]/[RECOVERABLE]/[QUALITY]`、 fatal/compliance に `<!channel>` mention(FR-114, FR-115)
+- [x] T090 [P] [US1] backend `backend/src/ymg_backend/infrastructure/slack/notifier.py`: 単一 webhook、 メッセージ冒頭にカテゴリ prefix `[FATAL]/[COMPLIANCE]/[TRANSIENT]/[RECOVERABLE]/[QUALITY]`、 fatal/compliance に `<!channel>` mention(FR-114, FR-115)
 
 **Checkpoint**: US1 単独で MVP として「投稿が回る」状態が完成。 dryrun=ON 既定なので、 デフォルトは dryrun_outputs に格納されるが US2 完了で承認 / 投稿が可能になる。
 
