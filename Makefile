@@ -48,8 +48,8 @@ restore-db: ## DB を DUMP=path から復元 (T131 で実装)
 youtube-auth: ## YouTube OAuth を一度だけ手動完走 (T085 で実装)
 	@echo "[youtube-auth] TODO: backend OAuth flow (T085)"
 
-panic-stop: ## 緊急停止: scheduler 停止 + 直近動画 private 化 (T114 で実装)
-	@echo "[panic-stop] TODO: infra/scripts/panic-stop.sh (T114)"
+panic-stop: ## 緊急停止: scheduler 停止 + 直近動画 private 化 (ADR-0031)
+	bash infra/scripts/panic-stop.sh
 
 healthcheck: ## backend/frontend/gpu_worker の /health を確認
 	bash infra/scripts/healthcheck.sh

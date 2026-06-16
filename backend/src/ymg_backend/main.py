@@ -44,6 +44,7 @@ from ymg_backend.api.dryrun import router as dryrun_router
 from ymg_backend.api.genres import router as genres_router
 from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
+from ymg_backend.api.panic_stop import router as panic_stop_router
 from ymg_backend.api.plans import router as plans_router
 from ymg_backend.api.posts import router as posts_router
 from ymg_backend.api.scheduler import router as scheduler_router
@@ -180,6 +181,7 @@ def _build_protected_router() -> APIRouter:
     router.include_router(plans_router)
     router.include_router(posts_router)
     router.include_router(scheduler_router)
+    router.include_router(panic_stop_router)
     router.include_router(dryrun_router)
     router.include_router(genres_router)
     router.include_router(analytics_router)

@@ -298,14 +298,14 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Tests for User Story 4
 
-- [ ] T111 [P] [US4] **TEST FIRST** `backend/tests/critical/test_panic_stop.py`: scheduler 停止、 直近 24h の動画リスト取得、 YouTube `videos.update(privacyStatus=private)` 呼び出し(respx mock)、 audit_log 記録を 100% カバー
+- [x] T111 [P] [US4] **TEST FIRST** `backend/tests/critical/test_panic_stop.py`: scheduler 停止、 直近 24h の動画リスト取得、 YouTube `videos.update(privacyStatus=private)` 呼び出し(respx mock)、 audit_log 記録を 100% カバー
 
 ### Backend + CLI
 
-- [ ] T112 [US4] backend `backend/src/ymg_backend/domain/panic_stop/service.py`: scheduler_enabled = false → scheduler 内 pending job を pause → 直近 N 時間動画リスト → privacyStatus=private 一括変更 → audit_log
-- [ ] T113 [US4] backend `backend/src/ymg_backend/api/panic_stop.py`: `POST /scheduler/panic-stop`(window_hours / set_private リストを受ける)
-- [ ] T114 [US4] `infra/scripts/panic-stop.sh` + `Makefile` の `make panic-stop`: 対話プロンプト → backend `/scheduler/panic-stop` 呼び出し
-- [ ] T115 [P] [US4] frontend `frontend/app/(admin)/scheduler/page.tsx` に "panic-stop" ボタン + 確認ダイアログ(window_hours 指定可)
+- [x] T112 [US4] backend `backend/src/ymg_backend/domain/panic_stop/service.py`: scheduler_enabled = false → scheduler 内 pending job を pause → 直近 N 時間動画リスト → privacyStatus=private 一括変更 → audit_log
+- [x] T113 [US4] backend `backend/src/ymg_backend/api/panic_stop.py`: `POST /scheduler/panic-stop`(window_hours / set_private リストを受ける)
+- [x] T114 [US4] `infra/scripts/panic-stop.sh` + `Makefile` の `make panic-stop`: 対話プロンプト → backend `/scheduler/panic-stop` 呼び出し
+- [x] T115 [P] [US4] frontend `frontend/app/(admin)/scheduler/page.tsx` に "panic-stop" ボタン + 確認ダイアログ(window_hours 指定可)
 
 **Checkpoint**: US4 完了で MVP 完了条件 #4 が満たせる。
 
