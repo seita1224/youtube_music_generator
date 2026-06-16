@@ -476,16 +476,58 @@ paths:
         "400":
           description: Invalid combination (Anthropic + subscription is forbidden)
 
+  /prompts:
+    get:
+      summary: List prompts and available versions (T135, FR-036)
+      operationId: listPrompts
+      description: >-
+        backend/prompts/<area>/<name>_v<N>.md を走査し、 area/name ごとに利用可能な
+        version 一覧を返す (PromptLoader.available_versions)。 read-only。 編集 (書込) は
+        MVP 範囲外。
+      parameters:
+        - in: query
+          name: area
+          description: area で絞り込む (未指定は全 area)。
+          schema:
+            type: string
+            example: "planner"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PromptSummary"
+
   /prompts/{prompt_name}:
     get:
+      summary: Preview a prompt body at a version (T135, FR-036)
       operationId: getPromptVersion
+      description: >-
+        指定 prompt の本文をプレビューする (PromptLoader.load)。 version 省略時は最新版
+        (N 最大) を解決する。 read-only。
       parameters:
         - in: path
           name: prompt_name
           required: true
+          description: "<area>/<name> 形式 (バージョン接尾辞は付けない)。"
           schema:
             type: string
-            example: "planner/system_v1"
+            example: "planner/system"
+        - in: query
+          name: version
+          required: false
+          description: 明示バージョン (1 以上)。 未指定は最新版。
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
       responses:
         "200":
           description: OK
@@ -493,6 +535,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PromptVersion"
+        "404":
+          description: prompt / version not found (PromptNotFoundError)
+
+  /mvp-check:
+    get:
+      summary: MVP release readiness checklist (T128, ADR-0035 §6)
+      operationId: getMvpCheck
+      description: >-
+        ADR-0035 の MVP 判定 6 項目を DB から判定し、 各項目を green / red で返す。
+        ダッシュボードの x/6 小インジケータ (T129) が参照する。 副作用なし (read-only)。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MvpCheck"
 
   /jobs/stream:
     get:
@@ -1057,6 +1116,70 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    PromptSummary:
+      type: object
+      description: GET /prompts の 1 要素 (area/name と利用可能な version 一覧)。
+      required: [area, name, versions]
+      properties:
+        area:
+          type: string
+          example: "planner"
+        name:
+          type: string
+          example: "system"
+        versions:
+          type: array
+          description: 利用可能な version (昇順)。
+          items:
+            type: integer
+          example: [1]
+        latest:
+          type: integer
+          description: 最新 version (versions の最大)。
+          example: 1
+
+    MvpCheckItem:
+      type: object
+      description: MVP 判定 6 項目の 1 つ (ADR-0035 §6)。
+      required: [id, label, status]
+      properties:
+        id:
+          type: string
+          enum:
+            - dryrun_success
+            - acoustid_clear
+            - unlisted_post
+            - panic_stop
+            - oauth_refresh
+            - slack_categories
+        label:
+          type: string
+          description: 人間可読な項目名。
+        status:
+          type: string
+          enum: [green, red]
+        detail:
+          type: string
+          description: 判定根拠 (件数等)。 任意。
+
+    MvpCheck:
+      type: object
+      description: GET /mvp-check のレスポンス (6 項目の判定結果と完了数)。
+      required: [items, completed, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MvpCheckItem"
+        completed:
+          type: integer
+          description: green の項目数 (0..6)。
+          example: 0
+        total:
+          type: integer
+          description: 判定項目総数 (常に 6)。
+          example: 6
 
     JobEvent:
       type: object

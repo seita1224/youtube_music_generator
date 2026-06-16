@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getHealth, type HealthResponse } from "@/lib/api/health";
 import { getSchedulerState, type SchedulerState } from "@/lib/api/scheduler";
+import { getMvpCheck, type MvpCheck } from "@/lib/api/mvp";
 
 // T067 + T068: ダッシュボードホーム(screen-spec.md §2 ①)。
 // scheduler 状態 + 直近 jobs 件数 + LLM provider 表示 + MVP x/6 小インジケータ + /health 表示。
@@ -46,6 +47,10 @@ export default function DashboardPage(): React.JSX.Element {
   const scheduler = useQuery<SchedulerState>({
     queryKey: ["scheduler"],
     queryFn: getSchedulerState,
+  });
+  const mvp = useQuery<MvpCheck>({
+    queryKey: ["mvp-check"],
+    queryFn: getMvpCheck,
   });
 
   const schedulerEnabled =
@@ -147,13 +152,22 @@ export default function DashboardPage(): React.JSX.Element {
         </CardContent>
       </Card>
 
-      {/* 下段 MVP 完了状況の小インジケータ(screen-spec.md §0 / §2 ①)。
-          x/6。 /mvp-check は仕様外の内部 endpoint のため数値は backend 連携待ち。 */}
-      <div className="flex items-center gap-2 text-xs text-slate-500">
+      {/* 下段 MVP 完了状況の小インジケータ(screen-spec.md §0 / §2 ①、 T129)。
+          x/6。 GET /mvp-check(ADR-0035 §6)連携。 未接続は数値を捏造せず「—」表示。 */}
+      <div
+        data-testid="mvp-indicator"
+        className="flex items-center gap-2 text-xs text-slate-500"
+      >
         <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
         <span>
-          MVP 完了状況: <span className="font-mono">—/{MVP_TOTAL}</span>
-          (詳細は内部 /mvp-check)
+          MVP 完了状況:{" "}
+          <span className="font-mono">
+            <StatusValue loading={mvp.isLoading} error={mvp.isError}>
+              {mvp.data?.completed ?? "—"}
+            </StatusValue>
+            /{mvp.data?.total ?? MVP_TOTAL}
+          </span>{" "}
+          完了(詳細は内部 /mvp-check)
         </span>
       </div>
     </div>

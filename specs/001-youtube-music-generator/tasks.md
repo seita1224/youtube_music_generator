@@ -361,7 +361,7 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 - [ ] T124 [P] [US7] `.github/workflows/ci.yml` に gpu_worker `docker build` ステップを追加し、 PR 毎に image build が green になることを確認(ADR-0031)
 - [ ] T125 [P] [US7] `infra/runbooks/runpod-migration.md`: RunPod Pod / Serverless のセットアップ + `docker push` + env 切替手順
-- [ ] T126 [US7] backend `backend/tests/integration/test_gpu_worker_swap.py`: `GPU_WORKER_BASE_URL` を mock サーバに向けて切替、 backend 再起動なしで設定リロード(`app_state` 経由 or 起動時 env 必須かは設計判断)
+- [x] T126 [US7] backend `backend/tests/integration/test_gpu_worker_swap.py`: `GPU_WORKER_BASE_URL` を mock サーバに向けて切替、 backend 再起動なしで設定リロード(`app_state` 経由 or 起動時 env 必須かは設計判断)
 
 **Checkpoint**: US7 完了で「移行できる契約」が CI でも担保される。
 
@@ -375,9 +375,9 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 > 注: MVP 完了チェックは **本開発作業の運用ゲート判定基準** であり、 製品の UI 機能ではない(screen-spec.md §0 参照)。 専用 UI ページは作らない。 backend API + Dashboard 隅の小インジケーターのみ提供。
 
-- [ ] T127 [P] backend `backend/src/ymg_backend/domain/mvp_check/checklist.py`: 6 項目 checklist の自動判定(dryrun 3 本連続 / AcoustID 全 clear / unlisted 1 本投稿実績 / panic-stop 予行 / OAuth refresh / Slack 5 カテゴリ動作)
-- [ ] T128 [P] backend `backend/src/ymg_backend/api/mvp_check.py`: `GET /mvp-check` で各項目の green / red を返す(CLI / curl から query 用、 主に seita 自身が確認)
-- [ ] T129 [P] frontend Dashboard(`frontend/app/(admin)/page.tsx`)に **小インジケーター** として `x / 6 完了` のサマリを表示(専用ページは作らない)
+- [x] T127 [P] backend `backend/src/ymg_backend/domain/mvp_check/checklist.py`: 6 項目 checklist の自動判定(dryrun 3 本連続 / AcoustID 全 clear / unlisted 1 本投稿実績 / panic-stop 予行 / OAuth refresh / Slack 5 カテゴリ動作)
+- [x] T128 [P] backend `backend/src/ymg_backend/api/mvp_check.py`: `GET /mvp-check` で各項目の green / red を返す(CLI / curl から query 用、 主に seita 自身が確認)
+- [x] T129 [P] frontend Dashboard(`frontend/app/(admin)/page.tsx`)に **小インジケーター** として `x / 6 完了` のサマリを表示(専用ページは作らない)
 
 ### Backup
 
@@ -392,7 +392,7 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Frontend Prompts UI
 
-- [ ] T135 [P] frontend `frontend/app/(admin)/prompts/page.tsx`: prompt version 切替 / 編集 / プレビュー UI(FR-036)
+- [x] T135 [P] frontend `frontend/app/(admin)/prompts/page.tsx`: prompt version 切替 / 編集 / プレビュー UI(FR-036)
 
 ### Documentation
 
