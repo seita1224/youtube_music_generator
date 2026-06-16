@@ -261,30 +261,30 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Tests for User Story 3
 
-- [ ] T099 [P] [US3] **TEST FIRST** `backend/tests/integration/test_weekly_cycle.py`: 1 週間分の analytics fixture → WeeklyPlan 生成 → `genre_distribution` 合計 1.0、 `referenced_metrics.window_days=7`、 `experiment_slot` 判定(FR-037/038)
-- [ ] T100 [P] [US3] **TEST FIRST** `backend/tests/critical/test_youtube_analytics_client.py`: Data API + Analytics API の respx mock で retention / views / impressions / ctr / traffic_sources の取得を 100% カバー
+- [x] T099 [P] [US3] **TEST FIRST** `backend/tests/integration/test_weekly_cycle.py`: 1 週間分の analytics fixture → WeeklyPlan 生成 → `genre_distribution` 合計 1.0、 `referenced_metrics.window_days=7`、 `experiment_slot` 判定(FR-037/038)
+- [x] T100 [P] [US3] **TEST FIRST** `backend/tests/critical/test_youtube_analytics_client.py`: Data API + Analytics API の respx mock で retention / views / impressions / ctr / traffic_sources の取得を 100% カバー
 
 ### YouTube Analytics
 
-- [ ] T101 [US3] backend `backend/src/ymg_backend/infrastructure/youtube/analytics_client.py`: Data API + Analytics API で動画ごとの retention / views / impressions / ctr / traffic_sources を取得、 `analytics_daily` に upsert(ADR-0021, FR-101)
-- [ ] T102 [P] [US3] backend `backend/src/ymg_backend/infrastructure/youtube/comments_client.py`: コメント取得 → `comments` に保存
-- [ ] T103 [P] [US3] backend `backend/src/ymg_backend/domain/analytics/summary.py`: planner LLM 入力用集計サマリ(各動画の retention / views / 公開日 / ジャンル を表形式)
+- [x] T101 [US3] backend `backend/src/ymg_backend/infrastructure/youtube/analytics_client.py`: Data API + Analytics API で動画ごとの retention / views / impressions / ctr / traffic_sources を取得、 `analytics_daily` に upsert(ADR-0021, FR-101)
+- [x] T102 [P] [US3] backend `backend/src/ymg_backend/infrastructure/youtube/comments_client.py`: コメント取得 → `comments` に保存
+- [x] T103 [P] [US3] backend `backend/src/ymg_backend/domain/analytics/summary.py`: planner LLM 入力用集計サマリ(各動画の retention / views / 公開日 / ジャンル を表形式)
 
 ### WeeklyPlan + ジャンルローテーション
 
-- [ ] T104 [US3] backend `backend/src/ymg_backend/domain/plans/weekly_planner.py`: WeeklyPlan 専用 planner、 avoid_genres / experiment_slots を取得して prompt context 化
-- [ ] T105 [P] [US3] backend `backend/src/ymg_backend/domain/genres/rotation.py`: 翌週 DailyPlan 発行時に WeeklyPlan を反映(avoid_genres / experiment_slots 適用)
-- [ ] T106 [P] [US3] backend `backend/src/ymg_backend/domain/genres/recommend.py`: experiment_slot 投入 ≥ 4 本 + 経過 ≥ 14 日で 主力ジャンル平均 retention 比 ≥ 80% → 「採用推奨」、 < 60% → 「削除推奨」(FR-037)
-- [ ] T107 [P] [US3] backend `backend/src/ymg_backend/api/genres.py`: `POST /genres/{name}/promote` + `POST /genres/{name}/disable`、 承認時に `genres.role` 遷移 + audit_log(FR-038)
+- [x] T104 [US3] backend `backend/src/ymg_backend/domain/plans/weekly_planner.py`: WeeklyPlan 専用 planner、 avoid_genres / experiment_slots を取得して prompt context 化
+- [x] T105 [P] [US3] backend `backend/src/ymg_backend/domain/genres/rotation.py`: 翌週 DailyPlan 発行時に WeeklyPlan を反映(avoid_genres / experiment_slots 適用)
+- [x] T106 [P] [US3] backend `backend/src/ymg_backend/domain/genres/recommend.py`: experiment_slot 投入 ≥ 4 本 + 経過 ≥ 14 日で 主力ジャンル平均 retention 比 ≥ 80% → 「採用推奨」、 < 60% → 「削除推奨」(FR-037)
+- [x] T107 [P] [US3] backend `backend/src/ymg_backend/api/genres.py`: `POST /genres/{name}/promote` + `POST /genres/{name}/disable`、 承認時に `genres.role` 遷移 + audit_log(FR-038)
 
 ### 週次スケジューラ + Analytics 取得ジョブ
 
-- [ ] T108 [US3] backend `backend/src/ymg_backend/infrastructure/scheduler.py` に週次 job(月曜朝) + analytics 取得日次 job を追加(投稿モード前でも analytics 取得は走らせる、 ADR-0035)
+- [x] T108 [US3] backend `backend/src/ymg_backend/infrastructure/scheduler.py` に週次 job(月曜朝) + analytics 取得日次 job を追加(投稿モード前でも analytics 取得は走らせる、 ADR-0035)
 
 ### Frontend
 
-- [ ] T109 [P] [US3] frontend `frontend/app/(admin)/plans/page.tsx`: Plan 一覧(cycle filter)+ 詳細 / 承認
-- [ ] T110 [P] [US3] frontend `frontend/app/(admin)/analytics/page.tsx`: ジャンル別 retention / views チャート(recharts)、 採用 / 削除推奨ジャンル UI
+- [x] T109 [P] [US3] frontend `frontend/app/(admin)/plans/page.tsx`: Plan 一覧(cycle filter)+ 詳細 / 承認
+- [x] T110 [P] [US3] frontend `frontend/app/(admin)/analytics/page.tsx`: ジャンル別 retention / views チャート(recharts)、 採用 / 削除推奨ジャンル UI
 
 **Checkpoint**: US3 完了で「観察 → 改善」ループが回る。
 

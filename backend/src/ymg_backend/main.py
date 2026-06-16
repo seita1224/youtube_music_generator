@@ -39,7 +39,9 @@ from loguru import logger
 from sqlalchemy import select, text
 from starlette.types import Lifespan
 
+from ymg_backend.api.analytics import router as analytics_router
 from ymg_backend.api.dryrun import router as dryrun_router
+from ymg_backend.api.genres import router as genres_router
 from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
 from ymg_backend.api.plans import router as plans_router
@@ -170,15 +172,17 @@ def _build_protected_router() -> APIRouter:
     """Basic 認証を全 endpoint に適用する親ルータを返す (ADR-0013)。
 
     ``dependencies=[Depends(require_basic_auth)]`` を親に付けることで、 配下の
-    全ルータ・全 endpoint に認証が効く。 業務ルータ (plans / posts / scheduler)
-    はここに ``router.include_router(...)`` で追加する。 子ルータ側には認証依存を
-    再付与しない (共有契約 (c): 認証は親が付与)。
+    全ルータ・全 endpoint に認証が効く。 業務ルータ (plans / posts / scheduler /
+    dryrun / genres / analytics) はここに ``router.include_router(...)`` で追加する。
+    子ルータ側には認証依存を再付与しない (共有契約 (c): 認証は親が付与)。
     """
     router = APIRouter(dependencies=[Depends(require_basic_auth)])
     router.include_router(plans_router)
     router.include_router(posts_router)
     router.include_router(scheduler_router)
     router.include_router(dryrun_router)
+    router.include_router(genres_router)
+    router.include_router(analytics_router)
     return router
 
 

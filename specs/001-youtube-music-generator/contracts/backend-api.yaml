@@ -532,6 +532,140 @@ paths:
         "200":
           description: OK
 
+  /genres:
+    get:
+      summary: List genres (rotation 状態の確認用; US3 T107)
+      operationId: listGenres
+      parameters:
+        - in: query
+          name: enabled
+          description: enabled=true/false で有効/無効のみに絞る (未指定は全件)
+          schema:
+            type: boolean
+        - in: query
+          name: role
+          description: role 文字列でフィルタ (primary / extended / experimental)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Genre"
+                  total:
+                    type: integer
+
+  /genres/{name}/promote:
+    post:
+      summary: ジャンルを採用方向へ昇格する (enabled=true + role 遷移; US3 T107)
+      description: >-
+        実験/無効ジャンルを主力寄りへ昇格する role 遷移。 enabled=true にし、
+        role を experimental→extended→primary の方向へ進める (target_role 明示も可)。
+        audit_log に action="genre_promoted" を残す。
+      operationId: promoteGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_role:
+                  description: 明示する遷移先 role (省略時は 1 段昇格)
+                  type: string
+                  enum: [extended, primary]
+                reason:
+                  description: 昇格理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "不正な role 遷移 (例: primary をさらに promote)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /genres/{name}/disable:
+    post:
+      summary: ジャンルを無効化する (enabled=false; US3 T107)
+      description: >-
+        avoid / 削除推奨ジャンルを無効化する。 enabled=false にし role を
+        experimental へ戻す (任意)。 daily_cycle._load_enabled_genres が
+        次回以降このジャンルを拾わなくなる。 audit_log に action="genre_disabled" を残す。
+      operationId: disableGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  description: 無効化理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics:
+    get:
+      summary: ジャンル別 retention/views 集計 + 採用/削除推奨 (frontend /analytics 用; US3 T110)
+      description: >-
+        /analytics/summary がジャンル別の生集計を返すのに対し、 本 endpoint は
+        frontend のチャート + 推奨テーブルが直接消費できる形 (by_genre 配列 +
+        recommendations 配列) を返す。 recommendations は genre recommend (T106) の
+        判定結果 (experiment_slot>=4本かつ経過>=14日で 主力平均 retention 比>=80%→adopt /
+        <60%→drop)。
+      operationId: getAnalytics
+      parameters:
+        - in: query
+          name: window_days
+          description: 集計ウィンドウ日数 (既定 14)
+          schema:
+            type: integer
+            default: 14
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOverview"
+
 components:
   securitySchemes:
     basicAuth:
@@ -553,6 +687,13 @@ components:
       schema:
         type: string
         format: uuid
+    GenreNamePath:
+      in: path
+      name: name
+      required: true
+      description: Genre.name (主キー。 例 "lo-fi hip-hop")
+      schema:
+        type: string
 
   schemas:
     HealthResponse:
@@ -773,6 +914,92 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VideoAnalytics"
+
+    Genre:
+      type: object
+      required: [name, display_name, role, enabled]
+      properties:
+        name:
+          type: string
+          description: 主キー (例 "lo-fi hip-hop")
+        display_name:
+          type: string
+        bpm_min:
+          type: integer
+          nullable: true
+        bpm_max:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        role:
+          description: enum ではなく文字列運用 (primary / extended / experimental)
+          type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GenreAnalytics:
+      type: object
+      required: [genre, role, video_count, avg_retention_pct, total_views]
+      properties:
+        genre:
+          type: string
+        role:
+          type: string
+        video_count:
+          type: integer
+        avg_retention_pct:
+          type: number
+          nullable: true
+        total_views:
+          type: integer
+
+    GenreRecommendation:
+      type: object
+      required: [genre, action, retention_ratio_to_primary, sample_size, days_elapsed, rationale]
+      properties:
+        genre:
+          type: string
+        action:
+          description: adopt=主力昇格推奨 / drop=削除推奨 / keep=継続観察
+          type: string
+          enum: [adopt, drop, keep]
+        retention_ratio_to_primary:
+          description: 主力ジャンル平均 retention に対する当該ジャンルの比 (>=0.8 で adopt / <0.6 で drop)
+          type: number
+          nullable: true
+        sample_size:
+          description: experiment_slot で投下した本数 (4 本以上が判定の前提)
+          type: integer
+        days_elapsed:
+          description: 実験開始からの経過日数 (14 日以上が判定の前提)
+          type: integer
+        rationale:
+          type: string
+
+    AnalyticsOverview:
+      type: object
+      required: [window_days, sample_size, by_genre, recommendations]
+      properties:
+        window_days:
+          type: integer
+        sample_size:
+          type: integer
+        by_genre:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenreAnalytics"
+        recommendations:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenreRecommendation"
 
     LlmUsage:
       type: object
