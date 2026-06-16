@@ -339,13 +339,13 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Backend SSE
 
-- [ ] T120 [US6] backend `backend/src/ymg_backend/api/sse.py`: `GET /jobs/stream` で job_history + 進行中ジョブを text/event-stream 配信(ADR-0023)
-- [ ] T121 [P] [US6] backend `backend/src/ymg_backend/infrastructure/event_bus.py`: pipeline 各 step が EventBus に投げる軽量パブサブ(asyncio Queue)
+- [x] T120 [US6] backend `backend/src/ymg_backend/api/sse.py`: `GET /jobs/stream` で job_history + 進行中ジョブを text/event-stream 配信(ADR-0023)
+- [x] T121 [P] [US6] backend `backend/src/ymg_backend/infrastructure/event_bus.py`: pipeline 各 step が EventBus に投げる軽量パブサブ(asyncio Queue)
 
 ### Frontend
 
-- [ ] T122 [P] [US6] frontend `frontend/app/(admin)/jobs/page.tsx`: SSE 受信 + ジャンル列 × step 行のグリッド + 状態色
-- [ ] T123 [P] [US6] frontend `frontend/lib/api/sse.ts`: EventSource ラッパ(再接続込み)
+- [x] T122 [P] [US6] frontend `frontend/app/(admin)/jobs/page.tsx`: SSE 受信 + ジャンル列 × step 行のグリッド + 状態色
+- [x] T123 [P] [US6] frontend `frontend/lib/api/sse.ts`: EventSource ラッパ(再接続込み)
 
 **Checkpoint**: US6 完了で運用時の障害切り分けが速くなる。
 

@@ -39,7 +39,7 @@ import inspect
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -66,6 +66,12 @@ from ymg_backend.infrastructure.db.models import (
     Genre,
     Plan,
     Post,
+)
+from ymg_backend.infrastructure.event_bus import (
+    ErrorCategoryStr,
+    JobEvent,
+    JobStatus,
+    event_bus,
 )
 from ymg_backend.infrastructure.youtube.compliance_gate import compliance_gate
 
@@ -94,6 +100,9 @@ _VIDEO_URI_TMPL: Final[str] = "video/{post_id}/final.mp4"
 
 # 連続 hit カウントを永続化する AppState キーの接頭辞 (ジャンル別)。
 _ACOUSTID_STATE_PREFIX: Final[str] = "acoustid_consecutive_hits:"
+
+# US6 進捗イベントの job_name (JobHistory.job_name と同語彙)。 全 publish 点で共通。
+_JOB_NAME: Final[str] = "daily_cycle"
 
 # description テンプレは現状ジャンル別を持たず共通の ``default.yaml`` を使う (ADR-0034 §(2) /
 # domain/render/description は default.yaml の body を骨格にする)。 ジャンル別テンプレが
@@ -247,6 +256,7 @@ class DailyCycleOrchestrator:
 
         plan_row.status = "executing"
         await session.commit()
+        _publish_cycle(step="cycle", status="running", plan_id=plan_id_str)  # US6
 
         post_ids: list[str] = []
         posted_count = 0
@@ -298,6 +308,11 @@ class DailyCycleOrchestrator:
 
         plan_row.status = "failed" if had_fatal else "completed"
         await session.commit()
+        _publish_cycle(  # US6: サイクル完了 (had_fatal なら failed)
+            step="cycle",
+            status="failed" if had_fatal else "succeeded",
+            plan_id=plan_id_str,
+        )
         log.info(
             "daily cycle finished",
             plan_id=plan_id_str,
@@ -417,31 +432,46 @@ class DailyCycleOrchestrator:
         log = bind_context(step="daily_cycle.post", genre=post.genre, job_id=str(post.id))
         post.status = "generating"
         await session.commit()
+        _publish_post(step="post", status="running", post=post)  # US6
 
         # --- 音楽 6 トラック + AcoustID プレチェック ---
+        _publish_post(step="music", status="running", post=post)  # US6
         tracks = await self._music.submit_and_wait(
             session=session, post=post, daily_post=daily_post, track_count=6
         )
         await session.commit()
+        _publish_post(step="music", status="succeeded", post=post)  # US6
 
+        _publish_post(step="acoustid", status="running", post=post)  # US6
         suspended = await self._run_acoustid_loop(
             session=session, post=post, daily_post=daily_post, tracks=tracks
         )
         if suspended:
             await self._mark_compliance_suspended(session, post)
+            _publish_post(  # US6: ジャンル停止で acoustid 失敗
+                step="acoustid",
+                status="failed",
+                post=post,
+                error_category=post.error_category,
+                message=post.error_message,
+            )
             await self._notifier.notify(
                 level=NotificationLevel.ERROR,
                 message="AcoustID 連続 hit によりジャンルを一時停止し投稿を中断しました",
                 context={"post_id": str(post.id), "genre": post.genre},
             )
             return _PostOutcome.SUSPENDED
+        _publish_post(step="acoustid", status="succeeded", post=post)  # US6: 全 clear
 
         # --- 画像 → サムネ → タイトル/説明 → 動画 ---
+        _publish_post(step="image", status="running", post=post)  # US6
         base_image_uri = await self._image.submit_and_wait(
             session=session, post=post, daily_post=daily_post
         )
         await session.commit()
+        _publish_post(step="image", status="succeeded", post=post)  # US6
 
+        _publish_post(step="render", status="running", post=post)  # US6
         await self._render_artifacts(
             session=session,
             post=post,
@@ -452,16 +482,20 @@ class DailyCycleOrchestrator:
 
         post.status = "generated"
         await session.commit()
+        _publish_post(step="render", status="succeeded", post=post)  # US6
         log.info("post artifacts generated", video_uri=post.video_uri)
 
         # --- 分岐: dryrun か投稿か ---
+        _publish_post(step="publish", status="running", post=post)  # US6
         if self._settings.dryrun_default:
             await self._create_dryrun(session=session, post=post)
             await session.commit()
+            _publish_post(step="publish", status="succeeded", post=post)  # US6: dryrun 作成
             return _PostOutcome.DRYRUN
 
         await self._publish(session=session, post=post)
         await session.commit()
+        _publish_post(step="publish", status="succeeded", post=post)  # US6: 投稿
         return _PostOutcome.POSTED
 
     async def _run_acoustid_loop(
@@ -695,9 +729,62 @@ class DailyCycleOrchestrator:
             await session.commit()
         except SQLAlchemyError:
             await session.rollback()
+        _publish_post(  # US6: post 失敗 (step は post 単位の集約点)
+            step="post",
+            status="failed",
+            post=post,
+            error_category=post.error_category,
+            message=post.error_message,
+        )
 
 
 # --- モジュール関数ヘルパ ---------------------------------------------------------
+
+
+def _publish_cycle(*, step: str, status: JobStatus, plan_id: str) -> None:
+    """サイクル (plan) 単位の進捗イベントを発行する (best-effort, US6)。
+
+    ``genre`` は持たない (grid の全体行)。 :meth:`EventBus.publish` は例外を漏らさない
+    契約 (event_bus.py) なので、 ここでも try/except で囲わずパイプラインを止めない。
+    """
+    event_bus.publish(
+        JobEvent(
+            timestamp="",
+            job_name=_JOB_NAME,
+            step=step,
+            status=status,
+            context_type="plan",
+            context_id=plan_id,
+        )
+    )
+
+
+def _publish_post(
+    *,
+    step: str,
+    status: JobStatus,
+    post: Post,
+    error_category: str | None = None,
+    message: str | None = None,
+) -> None:
+    """post 単位の進捗イベントを発行する (best-effort, US6)。
+
+    ``genre`` = ``post.genre`` (grid 列キー)。 失敗時は ``error_category`` / ``message`` を
+    付す。 :meth:`EventBus.publish` は例外を漏らさないため try/except は不要。
+    """
+    event_bus.publish(
+        JobEvent(
+            timestamp="",
+            job_name=_JOB_NAME,
+            step=step,
+            status=status,
+            genre=post.genre,
+            context_type="post",
+            context_id=str(post.id),
+            error_category=cast(ErrorCategoryStr | None, error_category),
+            message=message,
+        )
+    )
 
 
 def _accepts_consecutive_hits(func: object) -> bool:

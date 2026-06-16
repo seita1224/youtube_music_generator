@@ -49,6 +49,7 @@ from ymg_backend.api.panic_stop import router as panic_stop_router
 from ymg_backend.api.plans import router as plans_router
 from ymg_backend.api.posts import router as posts_router
 from ymg_backend.api.scheduler import router as scheduler_router
+from ymg_backend.api.sse import router as sse_router
 from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.logging import setup_logging
 from ymg_backend.core.security import require_basic_auth
@@ -187,6 +188,7 @@ def _build_protected_router() -> APIRouter:
     router.include_router(genres_router)
     router.include_router(analytics_router)
     router.include_router(llm_router)
+    router.include_router(sse_router)
     return router
 
 
