@@ -1,8 +1,11 @@
 # Thumbnail Fonts
 
 These font files are required by the Pillow thumbnail overlay (ADR-0034 §(3),
-§(6)). They are **not committed yet** — T050 bundles the binaries and is
-deferred (binary download out of scope for the template task T049).
+§(6)). The binaries are **bundled** (T050): each `*-Regular.ttf` below plus its
+`*-OFL.txt` license is committed in this directory. Variable-weight upstreams
+(Playfair Display / Space Grotesk / Noto Sans JP / Cormorant Garamond) are saved
+under the `-Regular.ttf` candidate name the overlay resolves; Pillow loads them
+via the default instance.
 
 All fonts below are licensed under the **SIL Open Font License 1.1**, which
 permits commercial use, redistribution, and bundling without modification.

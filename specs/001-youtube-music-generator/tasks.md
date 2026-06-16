@@ -119,7 +119,7 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 - [x] T047 [P] [Foundation] backend `backend/templates/title/*.yaml` × 6 ジャンル(ADR-0034)
 - [x] T048 [P] [Foundation] backend `backend/templates/description/default.yaml` + `_shared/{ai_disclosure,channel_promo}.txt`
 - [x] T049 [P] [Foundation] backend `backend/templates/thumbnail/*.yaml` × 6 + `_shared/{layout,badge}.json`
-- [ ] T050 [P] [Foundation] backend `backend/templates/fonts/` に SIL OFL ライセンスフォント 6 + Noto Sans JP を同梱
+- [x] T050 [P] [Foundation] backend `backend/templates/fonts/` に SIL OFL ライセンスフォント 6 + Noto Sans JP を同梱
 
 ### audit_log Writer
 
