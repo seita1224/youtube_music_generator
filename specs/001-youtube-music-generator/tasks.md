@@ -319,13 +319,13 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Tests for User Story 5
 
-- [ ] T116 [P] [US5] **TEST FIRST** `backend/tests/critical/test_llm_provider_swap.py`(T035 と統合): `/llm/providers` 経由の切替で active provider が変わり、 不正組合せ(Anthropic + subscription)は 400
+- [x] T116 [P] [US5] **TEST FIRST** `backend/tests/critical/test_llm_provider_swap.py`(T035 と統合): `/llm/providers` 経由の切替で active provider が変わり、 不正組合せ(Anthropic + subscription)は 400
 
 ### Backend + Frontend
 
-- [ ] T117 [P] [US5] backend `backend/src/ymg_backend/api/llm.py`: `GET /llm/providers` + `PUT /llm/providers` + `GET /llm/usage?month=YYYY-MM`(月次集計)
-- [ ] T118 [P] [US5] frontend `frontend/app/(admin)/llm/page.tsx`: provider / model / auth_mode 切替 UI + 月次コスト + 予算進捗バー
-- [ ] T119 [P] [US5] backend `backend/src/ymg_backend/domain/budget/alert.py`: 月次予算 50/80/100% 監視 + Slack 通知(FR-026)
+- [x] T117 [P] [US5] backend `backend/src/ymg_backend/api/llm.py`: `GET /llm/providers` + `PUT /llm/providers` + `GET /llm/usage?month=YYYY-MM`(月次集計)
+- [x] T118 [P] [US5] frontend `frontend/app/(admin)/llm/page.tsx`: provider / model / auth_mode 切替 UI + 月次コスト + 予算進捗バー
+- [x] T119 [P] [US5] backend `backend/src/ymg_backend/domain/budget/alert.py`: 月次予算 50/80/100% 監視 + Slack 通知(FR-026)
 
 **Checkpoint**: US5 完了で provider 比較実験が回せる。
 

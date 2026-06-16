@@ -44,6 +44,7 @@ from ymg_backend.api.dryrun import router as dryrun_router
 from ymg_backend.api.genres import router as genres_router
 from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
+from ymg_backend.api.llm import router as llm_router
 from ymg_backend.api.panic_stop import router as panic_stop_router
 from ymg_backend.api.plans import router as plans_router
 from ymg_backend.api.posts import router as posts_router
@@ -174,7 +175,7 @@ def _build_protected_router() -> APIRouter:
 
     ``dependencies=[Depends(require_basic_auth)]`` を親に付けることで、 配下の
     全ルータ・全 endpoint に認証が効く。 業務ルータ (plans / posts / scheduler /
-    dryrun / genres / analytics) はここに ``router.include_router(...)`` で追加する。
+    dryrun / genres / analytics / llm) はここに ``router.include_router(...)`` で追加する。
     子ルータ側には認証依存を再付与しない (共有契約 (c): 認証は親が付与)。
     """
     router = APIRouter(dependencies=[Depends(require_basic_auth)])
@@ -185,6 +186,7 @@ def _build_protected_router() -> APIRouter:
     router.include_router(dryrun_router)
     router.include_router(genres_router)
     router.include_router(analytics_router)
+    router.include_router(llm_router)
     return router
 
 
