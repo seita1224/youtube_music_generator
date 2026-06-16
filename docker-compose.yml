@@ -43,6 +43,13 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        # Basic 認証クレデンシャルをビルド時に注入(NEXT_PUBLIC_* はバンドルにインライン化)。
+        # LAN 単一ユーザー前提(ADR-0013)。 .env の ADMIN_* を流用。
+        NEXT_PUBLIC_BASIC_AUTH_USER: ${ADMIN_USERNAME:-admin}
+        NEXT_PUBLIC_BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+        # rewrites() のプロキシ先(ビルド時に manifest へ焼き込まれる)。
+        BACKEND_BASE_URL: http://backend:8000
     restart: unless-stopped
     environment:
       # frontend → backend は内部ネットワーク経由
@@ -50,7 +57,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:3000:3000"
+      # ホスト公開ポートは FRONTEND_HOST_PORT で変更可(ポート占有/転送 stuck 回避用)
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3000}:3000"
 
 volumes:
   pgdata:
