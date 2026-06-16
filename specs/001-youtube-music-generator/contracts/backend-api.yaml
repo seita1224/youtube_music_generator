@@ -248,6 +248,36 @@ paths:
         "200":
           description: Rejected
 
+  /dryrun/outputs/{id}/video:
+    get:
+      summary: Stream dryrun preview video (chunked, for <video> review playback)
+      description: >-
+        StorageAdapter.open でチャンク読みした動画を StreamingResponse で返す。
+        ブラウザの <video> から同一オリジン proxied パス
+        (/api/backend/dryrun/outputs/{id}/video) で参照され、 Basic 認証は
+        ブラウザの認証セッションに従う (authFetch は経由しない)。
+      operationId: getDryrunVideo
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 動画バイトストリーム (chunked)。
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: dryrun output が存在しない、 または動画 URI のオブジェクトが無い。
+        "409":
+          description: >-
+            動画がもう存在しない state (rejected / auto_expired) で配信不可。
+
   /scheduler:
     get:
       summary: Get scheduler enabled state

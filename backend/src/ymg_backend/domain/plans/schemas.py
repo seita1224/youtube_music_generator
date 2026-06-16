@@ -31,6 +31,12 @@ from pydantic import (
 # `model_validate(..., context={...})` に渡す許可ジャンル集合のキー(ADR-0032 (4))。
 ALLOWED_GENRES_CONTEXT_KEY = "allowed_genres"
 
+# 直近の否認理由リスト(`list[str]`)を planner に受け渡す際のキー(US2 契約 (d))。
+# `ALLOWED_GENRES_CONTEXT_KEY` と異なり `model_validate` の context ではなく、
+# user prompt 文面への注入用(`PlanGenerator._build_user_prompt` の「避ける理由」節)。
+# 空 / None の場合は注入をスキップする。
+REJECTED_REASONS_CONTEXT_KEY = "rejected_reasons"
+
 # genre_distribution 合計の許容誤差(浮動小数誤差を吸収、 ADR-0032 (3))。
 _DISTRIBUTION_SUM_TOLERANCE = 0.01
 

@@ -202,7 +202,8 @@ async def test_enable_starts_scheduler_and_adds_jobs() -> None:
     service.enable()
 
     assert sched.start_count == 1
-    assert set(sched.jobs) == set(DAILY_CYCLE_JOB_IDS)
+    # enable は日次サイクルに加え dryrun リテンション ジョブも登録するため subset 検証。
+    assert set(DAILY_CYCLE_JOB_IDS) <= set(sched.jobs)
 
 
 async def test_enable_does_not_restart_running_scheduler() -> None:
@@ -213,7 +214,8 @@ async def test_enable_does_not_restart_running_scheduler() -> None:
     service.enable()
 
     assert sched.start_count == 0
-    assert set(sched.jobs) == set(DAILY_CYCLE_JOB_IDS)
+    # enable は日次サイクルに加え dryrun リテンション ジョブも登録するため subset 検証。
+    assert set(DAILY_CYCLE_JOB_IDS) <= set(sched.jobs)
 
 
 async def test_disable_removes_jobs_but_keeps_scheduler() -> None:

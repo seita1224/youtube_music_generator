@@ -39,6 +39,7 @@ from loguru import logger
 from sqlalchemy import select, text
 from starlette.types import Lifespan
 
+from ymg_backend.api.dryrun import router as dryrun_router
 from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
 from ymg_backend.api.plans import router as plans_router
@@ -177,6 +178,7 @@ def _build_protected_router() -> APIRouter:
     router.include_router(plans_router)
     router.include_router(posts_router)
     router.include_router(scheduler_router)
+    router.include_router(dryrun_router)
     return router
 
 

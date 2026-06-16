@@ -80,6 +80,11 @@ def test_business_routers_are_registered(app: Any) -> None:
     assert "/posts" in paths
     assert "/posts/{post_id}" in paths
     assert "/scheduler" in paths
+    # dryrun レビュー業務ルータ (prefix /dryrun) の 4 endpoint が protected 配下に登録済み。
+    assert "/dryrun/outputs" in paths
+    assert "/dryrun/outputs/{output_id}/approve" in paths
+    assert "/dryrun/outputs/{output_id}/reject" in paths
+    assert "/dryrun/outputs/{output_id}/video" in paths
     # /health は認証不要ルートとして別途登録済み。
     assert "/health" in paths
 
@@ -106,3 +111,17 @@ def test_protected_route_reaches_handler_with_valid_credentials(client: TestClie
 def test_protected_route_rejects_wrong_credentials(client: TestClient) -> None:
     resp = client.get("/posts", auth=(_USERNAME, "wrong"))
     assert resp.status_code == 401
+
+
+def test_dryrun_route_requires_auth(client: TestClient) -> None:
+    # dryrun も protected 親ルータ配下 = 無認証で 401 (動画配信含め Basic 認証必須)。
+    resp = client.get("/dryrun/outputs")
+    assert resp.status_code == 401
+    assert resp.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+def test_dryrun_route_reaches_handler_with_valid_credentials(client: TestClient) -> None:
+    # 親ルータの認証を通過しハンドラへ到達 (fake session で空一覧 200)。
+    resp = client.get("/dryrun/outputs", auth=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json() == {"items": []}

@@ -40,6 +40,12 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
 from ymg_backend.core.logging import bind_context
+from ymg_backend.domain.dryrun.retention_job import (
+    RETENTION_HOUR,
+    RETENTION_JOB_ID,
+    RETENTION_MINUTE,
+    build_retention_runner,
+)
 from ymg_backend.domain.errors.errors import resolve_category
 from ymg_backend.infrastructure.db.session import get_sessionmaker
 
@@ -139,6 +145,30 @@ class SchedulerService:
                 "daily-cycle job registered", job_id=job_id, hour=hour, slot=slot
             )
 
+    def add_retention_job(self) -> None:
+        """dryrun リテンション (7 日 auto_expire) の日次 cron ジョブを登録する (冪等)。
+
+        JST 00:30 に :func:`run_dryrun_retention_job` を 1 回起動する。 ジョブ本体は自前で
+        ``AsyncSession`` を開き、 失敗は ADR-0028 で分類し本サービスの ``notifier`` 経由で
+        通知して握り潰す (scheduler スレッドを落とさない)。 ``replace_existing=True`` で
+        複数回呼んでも重複しない。
+        """
+        runner = build_retention_runner(notifier=self._notifier)
+        trigger = CronTrigger(hour=RETENTION_HOUR, minute=RETENTION_MINUTE, timezone=_JST)
+        self._scheduler.add_job(
+            runner,
+            trigger=trigger,
+            id=RETENTION_JOB_ID,
+            name=f"dryrun-retention ({RETENTION_HOUR:02d}:{RETENTION_MINUTE:02d} JST)",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+        logger.bind(component="scheduler").info(
+            "dryrun retention job registered", job_id=RETENTION_JOB_ID
+        )
+
     def remove_daily_jobs(self) -> None:
         """登録済みの日次サイクル cron ジョブを全て除去する (未登録 ID は無視)。"""
         for job_id in DAILY_CYCLE_JOB_IDS:
@@ -156,6 +186,7 @@ class SchedulerService:
             self._scheduler.start()
             logger.bind(component="scheduler").info("scheduler started (enable)")
         self.add_daily_jobs()
+        self.add_retention_job()  # dryrun リテンション (7 日 auto_expire) も同時に有効化
 
     def disable(self) -> None:
         """日次ジョブを除去する (``PUT /scheduler enabled=false`` 用)。
@@ -164,6 +195,11 @@ class SchedulerService:
         できるよう running は保つ)。 ジョブだけを外して発火を止める。
         """
         self.remove_daily_jobs()
+        if self._scheduler.get_job(RETENTION_JOB_ID) is not None:
+            self._scheduler.remove_job(RETENTION_JOB_ID)
+            logger.bind(component="scheduler").info(
+                "dryrun retention job removed", job_id=RETENTION_JOB_ID
+            )
         logger.bind(component="scheduler").info("scheduler disabled (jobs removed)")
 
     def registered_job_ids(self) -> tuple[str, ...]:

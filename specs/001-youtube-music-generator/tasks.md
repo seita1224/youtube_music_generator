@@ -234,20 +234,20 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Tests for User Story 2
 
-- [ ] T091 [P] [US2] **TEST FIRST** `backend/tests/integration/test_dryrun_lifecycle.py`: pending → approved → posted / pending → rejected / pending → auto_expired (7 日 freezegun)を網羅
-- [ ] T092 [P] [US2] **TEST FIRST** `frontend/tests/e2e/dryrun_review.spec.ts`: Playwright で dryrun ページ → 動画再生 → 承認 → 投稿完了表示
+- [x] T091 [P] [US2] **TEST FIRST** `backend/tests/integration/test_dryrun_lifecycle.py`: pending → approved → posted / pending → rejected / pending → auto_expired (7 日 freezegun)を網羅
+- [x] T092 [P] [US2] **TEST FIRST** `frontend/tests/e2e/dryrun_review.spec.ts`: Playwright で dryrun ページ → 動画再生 → 承認 → 投稿完了表示
 
 ### Backend
 
-- [ ] T093 [P] [US2] backend `backend/src/ymg_backend/domain/dryrun/service.py`: dryrun_outputs 状態遷移サービス(approve / reject / auto_expire / post)
-- [ ] T094 [P] [US2] backend `backend/src/ymg_backend/api/dryrun.py`: `GET /dryrun/outputs` + `POST /dryrun/outputs/{id}/approve` + `POST /dryrun/outputs/{id}/reject`(reason 必須)
-- [ ] T095 [P] [US2] backend `backend/src/ymg_backend/domain/dryrun/retention_job.py`: 日次 APScheduler ジョブで pending → 7 日後 auto_expired + 動画ファイル削除(FR-062)
-- [ ] T096 [US2] backend `backend/src/ymg_backend/domain/plans/planner.py` に否認理由の context 注入経路を追加(FR-063)
+- [x] T093 [P] [US2] backend `backend/src/ymg_backend/domain/dryrun/service.py`: dryrun_outputs 状態遷移サービス(approve / reject / auto_expire / post)
+- [x] T094 [P] [US2] backend `backend/src/ymg_backend/api/dryrun.py`: `GET /dryrun/outputs` + `POST /dryrun/outputs/{id}/approve` + `POST /dryrun/outputs/{id}/reject`(reason 必須)
+- [x] T095 [P] [US2] backend `backend/src/ymg_backend/domain/dryrun/retention_job.py`: 日次 APScheduler ジョブで pending → 7 日後 auto_expired + 動画ファイル削除(FR-062)
+- [x] T096 [US2] backend `backend/src/ymg_backend/domain/plans/planner.py` に否認理由の context 注入経路を追加(FR-063)
 
 ### Frontend
 
-- [ ] T097 [P] [US2] frontend `frontend/app/(admin)/dryrun/page.tsx`: pending 一覧 + サムネプレビュー + 再生プレーヤー
-- [ ] T098 [P] [US2] frontend `frontend/app/(admin)/dryrun/[id]/page.tsx`: 詳細画面、 承認 / 否認(reason テキスト入力)ボタン
+- [x] T097 [P] [US2] frontend `frontend/app/(admin)/dryrun/page.tsx`: pending 一覧 + サムネプレビュー + 再生プレーヤー
+- [x] T098 [P] [US2] frontend `frontend/app/(admin)/dryrun/[id]/page.tsx`: 詳細画面、 承認 / 否認(reason テキスト入力)ボタン
 
 **Checkpoint**: US2 完了で MVP に投稿 OK / NG の安全弁が入る。
 

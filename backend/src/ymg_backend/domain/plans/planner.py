@@ -52,6 +52,7 @@ from ymg_backend.domain.plans.schemas import (
 from ymg_backend.domain.prompts.loader import PromptLoader, PromptNotFoundError
 from ymg_backend.infrastructure.db.models import (
     AnalyticsDaily,
+    DryrunOutput,
     Plan,
     PlanMetricSnapshot,
     Video,
@@ -79,6 +80,10 @@ _FEW_SHOT_NAME: Final[str] = "few_shot"
 # 集計ウィンドウ / 履歴件数の既定値(ADR-0032 「過去 N 日」「直近 N=5」)。
 _DEFAULT_METRIC_WINDOW_DAYS: Final[int] = 7
 _DEFAULT_HISTORY_LIMIT: Final[int] = 5
+
+# session 渡しで否認理由を自動集約する際に DB から拾う直近 rejected の件数上限(US2 契約 (d))。
+# プロンプト肥大化を抑えつつ「直近に避けるべき理由」を十分カバーする件数。
+_DEFAULT_REJECTED_REASONS_LIMIT: Final[int] = 10
 
 # 計画判断は適度な多様性を持たせる(過度な決定論で量産感を出さない、 ADR-0032)。
 _PLANNER_TEMPERATURE: Final[float] = 0.7
@@ -203,6 +208,7 @@ class PlanGenerator:
         session: AsyncSession | None,
         target_date: date,
         allowed_genres: list[str],
+        rejected_reasons: list[str] | None = None,
     ) -> tuple[DailyPlan, LlmUsage]:
         """集計 + 履歴から :class:`DailyPlan` を生成し、 ``(plan, usage)`` を返す(契約準拠)。
 
@@ -215,6 +221,9 @@ class PlanGenerator:
             target_date: 計画対象日(JST)。
             allowed_genres: 許可ジャンル名の一覧(``Genre.name``、 例 ``"lo-fi hip-hop"``)。
                 prompt への注入と生成後の辞書照合の両方に使う。
+            rejected_reasons: 直近の否認理由(新しい順)を user prompt の「避ける理由」節へ
+                注入する(US2 契約 (d))。 ``None`` で ``session`` がある場合は直近の
+                ``DryrunOutput.reject_reason`` を自動集約する。 空 / 不在なら注入をスキップ。
 
         Returns:
             検証済み :class:`DailyPlan` と LLM 呼び出しの :class:`LlmUsage`。
@@ -225,11 +234,13 @@ class PlanGenerator:
         """
         snapshot = await self._aggregate_metrics(session, target_date)
         history = await self._load_plan_history(session)
+        reasons = await self._resolve_rejected_reasons(session, rejected_reasons)
         plan, usage = await self._invoke_llm(
             target_date=target_date,
             allowed_genres=allowed_genres,
             snapshot=snapshot,
             history=history,
+            rejected_reasons=reasons,
         )
         logger.info(
             "planner.generate_daily_plan produced plan",
@@ -246,6 +257,7 @@ class PlanGenerator:
         session: AsyncSession,
         target_date: date,
         allowed_genres: list[str],
+        rejected_reasons: list[str] | None = None,
     ) -> Plan:
         """:class:`DailyPlan` を生成し、 ``Plan`` + ``PlanMetricSnapshot`` を永続化して返す。
 
@@ -257,6 +269,8 @@ class PlanGenerator:
             session: 永続化に使う AsyncSession(commit は呼び出し側)。
             target_date: 計画対象日(JST)。
             allowed_genres: 許可ジャンル名の一覧。
+            rejected_reasons: 直近の否認理由(新しい順)。 ``None`` の場合は直近の
+                ``DryrunOutput.reject_reason`` を自動集約して prompt へ注入する(US2 契約 (d))。
 
         Returns:
             永続化済み(flush 済み)の :class:`Plan` レコード。 ``id`` は採番済み。
@@ -267,11 +281,13 @@ class PlanGenerator:
         """
         snapshot = await self._aggregate_metrics(session, target_date)
         history = await self._load_plan_history(session)
+        reasons = await self._resolve_rejected_reasons(session, rejected_reasons)
         plan, usage = await self._invoke_llm(
             target_date=target_date,
             allowed_genres=allowed_genres,
             snapshot=snapshot,
             history=history,
+            rejected_reasons=reasons,
         )
         plan_row = await self._persist_plan(
             session=session,
@@ -369,6 +385,33 @@ class PlanGenerator:
             _PlanHistoryItem(target_date=row.target_date, rationale=row.rationale) for row in rows
         )
 
+    async def _resolve_rejected_reasons(
+        self,
+        session: AsyncSession | None,
+        explicit: list[str] | None,
+    ) -> tuple[str, ...]:
+        """user prompt の「避ける理由」節へ注入する否認理由を解決する(US2 契約 (d))。
+
+        ``explicit`` が渡された場合はそれを優先する(空文字 / 空白のみは除去)。 ``None`` で
+        ``session`` がある場合は直近の ``DryrunOutput.reject_reason``(``state == "rejected"``)を
+        新しい順に最大 :data:`_DEFAULT_REJECTED_REASONS_LIMIT` 件まで自動集約する。 ``session``
+        も無く ``explicit`` も無ければ空タプル(注入スキップ)。
+        """
+        if explicit is not None:
+            return tuple(r.strip() for r in explicit if r and r.strip())
+        if session is None:
+            return ()
+        stmt = (
+            select(DryrunOutput.reject_reason)
+            .where(DryrunOutput.state == "rejected")
+            .where(DryrunOutput.reject_reason.is_not(None))
+            .order_by(DryrunOutput.reviewed_at.desc().nullslast())
+            .limit(_DEFAULT_REJECTED_REASONS_LIMIT)
+        )
+        rows = (await session.execute(stmt)).all()
+        stripped = (row.reject_reason.strip() for row in rows if row.reject_reason)
+        return tuple(reason for reason in stripped if reason)
+
     # ------------------------------------------------------------------
     # LLM 呼び出し / 辞書照合
     # ------------------------------------------------------------------
@@ -379,6 +422,7 @@ class PlanGenerator:
         allowed_genres: list[str],
         snapshot: MetricSnapshot,
         history: tuple[_PlanHistoryItem, ...],
+        rejected_reasons: tuple[str, ...] = (),
     ) -> tuple[DailyPlan, LlmUsage]:
         """system + few-shot + 集計/履歴 user prompt で LLM を呼び、 辞書照合して返す。"""
         system_text = self._load_system_prompt()
@@ -389,6 +433,7 @@ class PlanGenerator:
             snapshot=snapshot,
             history=history,
             few_shot_text=few_shot_text,
+            rejected_reasons=rejected_reasons,
         )
         request: LlmRequest[DailyPlan] = LlmRequest(
             messages=[
@@ -525,8 +570,9 @@ class PlanGenerator:
         snapshot: MetricSnapshot,
         history: tuple[_PlanHistoryItem, ...],
         few_shot_text: str,
+        rejected_reasons: tuple[str, ...] = (),
     ) -> str:
-        """集計サマリ / 履歴 / 許可ジャンル / few-shot を user prompt に組む。"""
+        """集計サマリ / 履歴 / 許可ジャンル / few-shot / 否認理由を user prompt に組む。"""
         genre_lines = "\n".join(f"- {g}" for g in allowed_genres) or "- (なし)"
         history_block = self._format_history(history)
         sections = [
@@ -544,6 +590,14 @@ class PlanGenerator:
             "## 直近の plan 履歴(新しい順、 rationale 込み)",
             history_block,
         ]
+        if rejected_reasons:
+            sections.extend(
+                [
+                    "",
+                    "## 直近の却下理由(避ける。 同様の方向性は繰り返さない)",
+                    self._format_rejected_reasons(rejected_reasons),
+                ]
+            )
         if few_shot_text:
             sections.extend(
                 [
@@ -600,6 +654,11 @@ class PlanGenerator:
             day = item.target_date.isoformat() if item.target_date else "(日付不明)"
             lines.append(f"- {day}: {item.rationale}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_rejected_reasons(rejected_reasons: tuple[str, ...]) -> str:
+        """直近の否認理由を箇条書きに整形する(新しい順、 呼び出し側で非空保証)。"""
+        return "\n".join(f"- {reason}" for reason in rejected_reasons)
 
     # ------------------------------------------------------------------
     # provider メタ情報
