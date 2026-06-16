@@ -32,18 +32,21 @@ restart-backend: ## backend のみ再起動
 restart-gpu: ## GPU worker (systemd) を再起動
 	sudo systemctl restart ymg-gpu-worker
 
-migrate: ## DB マイグレーション (事前 pg_dump 込, ADR-0031) — T019 で実装
-	@echo "[migrate] pre-dump → $(BACKUP_DIR)/pre-migrate-$(TS).sql (T019 で実装)"
-	@echo "[migrate] TODO: $(COMPOSE) exec -T backend uv run alembic upgrade head"
+migrate: ## DB マイグレーション (事前 pg_dump 込, ADR-0031)
+	@mkdir -p $(BACKUP_DIR)
+	@echo "[migrate] pre-dump → $(BACKUP_DIR)/pre-migrate-$(TS).sql"
+	$(COMPOSE) exec -T postgres sh -c 'pg_dump -U "$$POSTGRES_USER" "$$POSTGRES_DB"' > $(BACKUP_DIR)/pre-migrate-$(TS).sql
+	$(COMPOSE) exec -T backend uv run alembic upgrade head
 
-deploy: ## git pull → migrate → rebuild → up → healthcheck (T132 で実装)
-	@echo "[deploy] TODO: infra/scripts/deploy.sh (T132)"
+deploy: ## git pull → migrate → rebuild → up → healthcheck (ADR-0031)
+	bash infra/scripts/deploy.sh
 
-backup: ## pg_dump + メタデータを BACKUP_ROOT へ (Fernet 鍵は除外, T130)
-	@echo "[backup] TODO: infra/scripts/backup.sh (T130)"
+backup: ## pg_dump + メタデータを BACKUP_ROOT へ (Fernet 鍵は除外, ADR-0026)
+	bash infra/scripts/backup.sh
 
-restore-db: ## DB を DUMP=path から復元 (T131 で実装)
-	@echo "[restore-db] TODO: restore from $(DUMP) (T131)"
+restore-db: ## DB を DUMP=path から復元 (例: make restore-db DUMP=backups/db-xxx.sql)
+	@test -n "$(DUMP)" || { echo "DUMP=<path> を指定してください"; exit 1; }
+	$(COMPOSE) exec -T postgres sh -c 'psql -U "$$POSTGRES_USER" "$$POSTGRES_DB"' < $(DUMP)
 
 youtube-auth: ## YouTube OAuth を一度だけ手動完走 (T085 で実装)
 	@echo "[youtube-auth] TODO: backend OAuth flow (T085)"
@@ -57,8 +60,16 @@ healthcheck: ## backend/frontend/gpu_worker の /health を確認
 test: ## backend 全テスト
 	cd backend && uv run pytest -q
 
-test-critical: ## critical path テストを 100% カバレッジ強制 (Constitution II, T139)
-	cd backend && uv run pytest tests/critical --cov=ymg_backend --cov-fail-under=100
+test-critical: ## critical path モジュールを 100% カバレッジ強制 (Constitution II, T139)
+	cd backend && uv run pytest tests/critical \
+	  --cov=ymg_backend.core.security \
+	  --cov=ymg_backend.domain.directive.parser \
+	  --cov=ymg_backend.domain.compliance.validators \
+	  --cov=ymg_backend.domain.pipeline.acoustid \
+	  --cov=ymg_backend.domain.analytics.client \
+	  --cov=ymg_backend.domain.panic_stop.service \
+	  --cov=ymg_backend.llm.factory \
+	  --cov-report=term-missing --cov-fail-under=100
 
 lint: ## ruff + eslint
 	cd backend && uv run ruff check .

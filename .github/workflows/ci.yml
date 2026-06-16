@@ -73,6 +73,18 @@ jobs:
           code=$?
           if [ "$code" -eq 5 ]; then echo "no tests collected yet"; exit 0; fi
           exit $code
+      - name: Critical path coverage (100%, Constitution II — merge gate, T139/T140)
+        working-directory: backend
+        run: |
+          uv run pytest tests/critical \
+            --cov=ymg_backend.core.security \
+            --cov=ymg_backend.domain.directive.parser \
+            --cov=ymg_backend.domain.compliance.validators \
+            --cov=ymg_backend.domain.pipeline.acoustid \
+            --cov=ymg_backend.domain.analytics.client \
+            --cov=ymg_backend.domain.panic_stop.service \
+            --cov=ymg_backend.llm.factory \
+            --cov-report=term-missing --cov-fail-under=100
 
   frontend:
     needs: changes

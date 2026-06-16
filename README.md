@@ -9,7 +9,60 @@
 - **バックエンド:** Python (FastAPI)
 - **管理UI:** Next.js (App Router)
 
+## アーキテクチャ概要
+
+docker compose (backend / frontend / postgres) + host 直 GPU worker (systemd) の
+**ハイブリッド構成** (ADR-0031)。 GPU worker は HTTP API 契約 + fsspec ストレージで
+backend と疎結合し、 `GPU_WORKER_BASE_URL` を差し替えるだけで RunPod 等クラウド GPU へ
+移行できる (backend/frontend のコード変更不要)。
+
+```text
+                ┌──────────────────────── docker compose ───────────────────────┐
+  ブラウザ ──→  │  frontend (Next.js :3000)  ──→  backend (FastAPI :8000)        │
+  (Basic 認証)  │                                   │   │                        │
+                │                  PostgreSQL :5432 ─┘   │  APScheduler (in-proc) │
+                │                  (pgvector)            │                        │
+                └────────────────────────────────────────┼───────────────────────┘
+                                                          │ HTTP (GPU_WORKER_BASE_URL)
+                                                          ▼
+                                      GPU worker (host 直 + systemd :8001)
+                                      ACE-Step (音楽) + SDXL (画像)
+                                          ↕ fsspec (file:// / s3://)
+                                      共有ストレージ (/srv/ymg/outputs …)
+```
+
+- **計画 → 生成 → 投稿** のパイプライン中核: `backend/.../domain/pipeline/daily_cycle.py`
+- **マスターLLM** は計画/タイトル/説明の生成のみ担当 (ADR-0008)。 投稿は dryrun を既定とし、
+  人間が一手挟む運用 (ADR-0007 / ADR-0035)。
+- 詳細な構成判断は ADR (下記) と [plan.md](specs/001-youtube-music-generator/plan.md) を参照。
+
+## クイックスタート (docker 起動)
+
+```bash
+cp .env.example .env          # 最低 POSTGRES_PASSWORD / ADMIN_PASSWORD / FERNET_KEY を設定
+make up                       # backend / frontend / postgres を起動
+make migrate                  # alembic upgrade head (事前 pg_dump 込, ADR-0031)
+make healthcheck              # backend / frontend / gpu_worker の /health を確認
+```
+
+- 管理 UI: `http://localhost:3000` (Basic 認証 = `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
+- frontend のホスト公開ポートは既定 **3000**。 ポート占有や Docker Desktop の転送 stuck 時は
+  `.env` の `FRONTEND_HOST_PORT` を変更 (例 **3001**)。
+- postgres も同様に `POSTGRES_HOST_PORT` で衝突回避できる (既定 5432)。
+- 完全な手順 (モデル重みDL / OAuth / GPU worker 起動) は
+  [quickstart.md](specs/001-youtube-music-generator/quickstart.md) を参照。
+- 運用コマンド一覧は `make help`。
+
 ## ドキュメント
+
+- [plan.md](specs/001-youtube-music-generator/plan.md) — 実装計画
+- [spec.md](specs/001-youtube-music-generator/spec.md) — 機能仕様
+- [screen-spec.md](specs/001-youtube-music-generator/screen-spec.md) — 画面仕様
+- [quickstart.md](specs/001-youtube-music-generator/quickstart.md) — cold start 手順
+- [data-model.md](specs/001-youtube-music-generator/data-model.md) — データモデル
+- [contracts/](specs/001-youtube-music-generator/contracts/) — API 契約 (GPU worker / backend)
+- [perf-notes.md](specs/001-youtube-music-generator/perf-notes.md) — 並列化余地 / prompt caching 計測
+- [infra/runbooks/runpod-migration.md](infra/runbooks/runpod-migration.md) — RunPod 移行 runbook
 
 - [requirements.md](specs/001-youtube-music-generator/requirements.md) — 要件定義 v2(最新スナップショット)
 - [specs/001-youtube-music-generator/adr/](specs/001-youtube-music-generator/adr/) — Architecture Decision Records

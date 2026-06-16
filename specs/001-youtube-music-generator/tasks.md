@@ -359,8 +359,8 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Validation
 
-- [ ] T124 [P] [US7] `.github/workflows/ci.yml` に gpu_worker `docker build` ステップを追加し、 PR 毎に image build が green になることを確認(ADR-0031)
-- [ ] T125 [P] [US7] `infra/runbooks/runpod-migration.md`: RunPod Pod / Serverless のセットアップ + `docker push` + env 切替手順
+- [x] T124 [P] [US7] `.github/workflows/ci.yml` に gpu_worker `docker build` ステップを追加し、 PR 毎に image build が green になることを確認(ADR-0031)
+- [x] T125 [P] [US7] `infra/runbooks/runpod-migration.md`: RunPod Pod / Serverless のセットアップ + `docker push` + env 切替手順
 - [x] T126 [US7] backend `backend/tests/integration/test_gpu_worker_swap.py`: `GPU_WORKER_BASE_URL` を mock サーバに向けて切替、 backend 再起動なしで設定リロード(`app_state` 経由 or 起動時 env 必須かは設計判断)
 
 **Checkpoint**: US7 完了で「移行できる契約」が CI でも担保される。
@@ -381,14 +381,14 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Backup
 
-- [ ] T130 [P] `infra/scripts/backup.sh`: `pg_dump` + 動画 / 音楽メタデータコピー、 Fernet 鍵は除外(ADR-0026, FR-120, FR-122)
-- [ ] T131 [P] `Makefile` の `make backup` / `make restore-db DUMP=...` ターゲット実装
+- [x] T130 [P] `infra/scripts/backup.sh`: `pg_dump` + 動画 / 音楽メタデータコピー、 Fernet 鍵は除外(ADR-0026, FR-120, FR-122)
+- [x] T131 [P] `Makefile` の `make backup` / `make restore-db DUMP=...` ターゲット実装
 
 ### Deploy / Lifecycle
 
-- [ ] T132 [P] `Makefile` の `make deploy` 実装: git pull → migrate(pre-dump 込)→ image rebuild → docker compose up → gpu_worker restart → healthcheck(ADR-0031)
-- [ ] T133 [P] `infra/systemd/ymg-stack.service` + `ymg-gpu-worker.service` の最終調整、 enable 設定確認
-- [ ] T134 [P] `infra/scripts/deploy.sh` を Makefile からも呼べる薄いラッパに調整
+- [x] T132 [P] `Makefile` の `make deploy` 実装: git pull → migrate(pre-dump 込)→ image rebuild → docker compose up → gpu_worker restart → healthcheck(ADR-0031)
+- [x] T133 [P] `infra/systemd/ymg-stack.service` + `ymg-gpu-worker.service` の最終調整、 enable 設定確認
+- [x] T134 [P] `infra/scripts/deploy.sh` を Makefile からも呼べる薄いラッパに調整
 
 ### Frontend Prompts UI
 
@@ -396,24 +396,24 @@ description: "Implementation task list for YouTube 音楽投稿自動化シス�
 
 ### Documentation
 
-- [ ] T136 [P] `specs/001-youtube-music-generator/quickstart.md` 実機検証 + 追記
-- [ ] T137 [P] `README.md` トップにアーキ図リンク追加
-- [ ] T138 [P] `specs/001-youtube-music-generator/adr/` index の自動生成 script(将来のため)
+- [x] T136 [P] `specs/001-youtube-music-generator/quickstart.md` 実機検証 + 追記
+- [x] T137 [P] `README.md` トップにアーキ図リンク追加
+- [x] T138 [P] `specs/001-youtube-music-generator/adr/` index の自動生成 script(将来のため)
 
 ### Critical Path Coverage 計測
 
-- [ ] T139 backend `make test-critical` で `backend/tests/critical/` を pytest-cov で 100% カバレッジ強制(Constitution II)
-- [ ] T140 [P] `.github/workflows/ci.yml` で critical テストが 100% で通らないと merge ブロック
+- [x] T139 backend `make test-critical` で `backend/tests/critical/` を pytest-cov で 100% カバレッジ強制(Constitution II)
+- [x] T140 [P] `.github/workflows/ci.yml` で critical テストが 100% で通らないと merge ブロック
 
 ### Security 強化
 
-- [ ] T141 [P] `.github/workflows/secrets-scan.yml`: gitleaks 等で `.env` 系の混入検査
-- [ ] T142 [P] backend `backend/src/ymg_backend/core/security.py` の Basic auth: timing attack 対策(`secrets.compare_digest`)
+- [x] T141 [P] `.github/workflows/secrets-scan.yml`: gitleaks 等で `.env` 系の混入検査
+- [x] T142 [P] backend `backend/src/ymg_backend/core/security.py` の Basic auth: timing attack 対策(`secrets.compare_digest`)
 
 ### Performance
 
-- [ ] T143 [P] backend pipeline で並列化可能箇所(SDXL ↔ AcoustID 並列等)の整理
-- [ ] T144 [P] backend Anthropic prompt caching hit 率を usage_log で測定、 90% 未満なら system block の構成見直し
+- [x] T143 [P] backend pipeline で並列化可能箇所(SDXL ↔ AcoustID 並列等)の整理
+- [x] T144 [P] backend Anthropic prompt caching hit 率を usage_log で測定、 90% 未満なら system block の構成見直し
 
 ---
 

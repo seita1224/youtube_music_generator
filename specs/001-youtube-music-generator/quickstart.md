@@ -62,7 +62,10 @@ cp .env.example .env
 $EDITOR .env
 ```
 
-最低限の必須項目:
+最低限「これだけは値を入れる」3 つ: **`POSTGRES_PASSWORD` / `ADMIN_PASSWORD` / `FERNET_KEY`**。
+これらが空だと `make up` (compose の `:?` チェック) や backend 起動が失敗する。
+
+必須項目 (テンプレ全体は `.env.example`):
 
 ```dotenv
 # --- データ / ストレージ ---
@@ -70,18 +73,20 @@ DATA_ROOT=/srv/ymg                          # 動画/音楽/サムネ/モデル�
 BACKUP_ROOT=/mnt/backup/ymg                 # ADR-0026 セカンダリディスク
 
 # --- PostgreSQL ---
-POSTGRES_HOST=postgres
+POSTGRES_HOST=postgres                      # コンテナ間は service 名。 host から alembic 直叩き時は localhost
 POSTGRES_PORT=5432
+POSTGRES_HOST_PORT=5432                      # ホスト公開ポート。 他プロジェクトの 5432 と衝突するなら変更 (例 5433)
 POSTGRES_DB=ymg
+POSTGRES_TEST_DB=ymg_test                    # integration テスト専用 DB (dev DB を壊さない)
 POSTGRES_USER=ymg
-POSTGRES_PASSWORD=__set_strong_value__
+POSTGRES_PASSWORD=__set_strong_value__       # ← 必須
 
 # --- Fernet(ADR-0012)バックアップ対象外 ---
-FERNET_KEY=__base64_44_chars__              # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+FERNET_KEY=__base64_44_chars__              # ← 必須。 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
 # --- 管理 UI Basic 認証(ADR-0013)---
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=__set_strong_value__
+ADMIN_PASSWORD=__set_strong_value__          # ← 必須 (frontend ビルド時にも注入される)
 
 # --- LLM Provider(ADR-0019)---
 LLM_PROVIDER=openai                         # openai / anthropic / ollama
@@ -164,9 +169,15 @@ until docker compose exec -T postgres pg_isready -U ymg; do sleep 1; done
 
 # Alembic 初期マイグレーション(seed: genres 6 件 + app_state + model_pricing)
 make migrate
+# make migrate 未実装の段階では同等の生コマンドで代用できる:
+#   docker compose exec -T backend uv run alembic upgrade head
 ```
 
-`make migrate` は事前に `pg_dump` を `/srv/ymg/backups/pre-migrate-<ts>.sql` に取る(ADR-0031)。 初回は空 DB なので空ダンプになる。
+`make migrate` は事前に `pg_dump` を `${BACKUP_ROOT}/pre-migrate-<ts>.dump` に取る(ADR-0031)。 初回は空 DB なので空ダンプになる。
+
+> **integration テストは dev DB を壊さない:** テストは専用の `POSTGRES_TEST_DB`(既定 `ymg_test`)を
+> 使う。 `make migrate` / `make up` が触る dev DB(`POSTGRES_DB`=`ymg`)とは別 DB なので、
+> `make test` を流しても投稿履歴や app_state は消えない。
 
 ## 8. YouTube OAuth 初期化
 
@@ -221,7 +232,9 @@ curl -fsS -u admin:__pass__ http://127.0.0.1:8000/health | jq
 # }
 
 # 管理 UI
-open http://127.0.0.1:3000          # Basic auth でログイン
+open http://localhost:3000          # Basic auth でログイン (既定ポート 3000)
+# ポートを占有されている / Docker Desktop の転送が stuck する場合は
+# .env の FRONTEND_HOST_PORT を変更 (例 3001) → make up し直し → http://localhost:3001
 ```
 
 ## 11. 初回 dryrun: DailyPlan 生成 → 動画生成 → 承認待ち
