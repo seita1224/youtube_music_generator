@@ -6,7 +6,7 @@ Constitution II / Compliance-First (ADR-0020, ADR-0028) を 100% カバーする
 
 - `status.containsSyntheticMedia=true` が無い / false / 非 bool の upload body を
   投稿しようとすると ``ComplianceError`` が raise され、 投稿が停止する。
-- 違反時に Slack 通知 (ERROR レベル / ``[ERROR]`` prefix) が必ず送られる。
+- 違反時に Slack 通知 (ERROR レベル / FR-114 カテゴリ名 prefix ``[COMPLIANCE]``) が必ず送られる。
 - 違反時に ``audit_log`` へ ``compliance_violation`` が 1 行記録される。
 - 正常 body (``containsSyntheticMedia=true``) は素通りし、 Slack / audit は呼ばれない。
 - DB-only / Slack-only の単体検証も独立して通る (ガード層と通知層の責務分離)。
@@ -170,7 +170,9 @@ async def test_enforce_valid_body_no_side_effects() -> None:
     assert session.flush_count == 0
 
 
+@pytest.mark.fr("FR-112")
 async def test_enforce_violation_raises_notifies_audits() -> None:
+    """FR-112: compliance 違反で投稿停止 (ComplianceError) + Slack 通知 + audit 記録を行う。"""
     notifier = SpyNotifier()
     session = SpySession()
     body = _valid_body()
@@ -190,14 +192,14 @@ async def test_enforce_violation_raises_notifies_audits() -> None:
     assert exc.value.category is ErrorCategory.COMPLIANCE
     assert exc.value.context["reason"] == "missing_flag"
 
-    # 2) Slack 通知 (1 回 / ERROR / prefix [ERROR])
+    # 2) Slack 通知 (1 回 / ERROR レベル / FR-114 カテゴリ名 prefix [COMPLIANCE])
     assert len(notifier.notices) == 1
     notice = notifier.notices[0]
     assert notice.level is NotificationLevel.ERROR
-    assert notice.prefix == "[ERROR]"
+    assert notice.prefix == "[COMPLIANCE]"
     assert notice.video_ref == "post-bad"
     assert notice.reason == "missing_flag"
-    assert "[ERROR]" in notice.message
+    assert "[COMPLIANCE]" in notice.message
 
     # 3) audit_log に compliance_violation を 1 行
     assert len(session.audit_inserts) == 1
@@ -255,7 +257,7 @@ def test_notice_message_contains_context() -> None:
         video_ref="vref-9", reason="missing_status"
     )
     assert notice.level is NotificationLevel.ERROR
-    assert notice.prefix == "[ERROR]"
+    assert notice.prefix == "[COMPLIANCE]"
     assert "vref-9" in notice.message
     assert "missing_status" in notice.message
-    assert notice.message.startswith("[ERROR]")
+    assert notice.message.startswith("[COMPLIANCE]")

@@ -20,7 +20,11 @@ import pytest
 from sqlalchemy import Insert, Select
 
 from ymg_backend.api import scheduler as api_scheduler
-from ymg_backend.domain.errors.errors import RecoverableError
+from ymg_backend.domain.errors.errors import (
+    FatalError,
+    RecoverableError,
+    SchedulerHaltError,
+)
 from ymg_backend.infrastructure import scheduler as infra_scheduler
 from ymg_backend.infrastructure.scheduler import DAILY_CYCLE_JOB_IDS, SchedulerService
 
@@ -160,8 +164,9 @@ def _make_service(
     )
 
 
+@pytest.mark.fr("FR-070")
 async def test_add_daily_jobs_registers_both_slots() -> None:
-    """``add_daily_jobs`` で朝 / 夕の 2 slot がジョブ登録される。"""
+    """FR-070: ``add_daily_jobs`` で朝 / 夕の 2 slot がジョブ登録される。"""
     sched = _FakeScheduler()
     service = _make_service(sched)
 
@@ -260,17 +265,63 @@ async def test_run_slot_invokes_cycle_runner(monkeypatch: pytest.MonkeyPatch) ->
     assert len(runner.calls) == 1
 
 
+@pytest.mark.fr("FR-113")
 async def test_run_slot_swallows_error_and_notifies(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ジョブ内例外は握り潰し、 notifier へ通知する (scheduler を落とさない)。"""
+    """FR-113: 非 halt のジョブ内例外は ADR-0028 分類 + Slack 通知し、 scheduler は止めない。
+
+    recoverable 等の通常例外は握り潰してサイクルを中断するのみ(scheduler 継続)。 scheduler の
+    自動停止はインフラ級 fatal(:class:`SchedulerHaltError`)に限る(下の halt テスト参照)。
+    """
     _patch_sessionmaker(monkeypatch)
     runner = _RecordingRunner(fail=RecoverableError("boom"))
     notifier = _SpyNotifier()
-    service = _make_service(_FakeScheduler(), runner=runner, notifier=notifier)
+    sched = _FakeScheduler()
+    service = _make_service(sched, runner=runner, notifier=notifier)
+    service.add_daily_jobs()
 
     await service._run_slot(slot="evening")  # 例外が外に漏れないこと
 
     assert len(notifier.errors) == 1
     assert isinstance(notifier.errors[0][0], RecoverableError)
+    assert service.registered_job_ids() == DAILY_CYCLE_JOB_IDS  # scheduler は継続
+
+
+@pytest.mark.fr("FR-113")
+async def test_run_slot_disables_scheduler_on_halt_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-113: SchedulerHaltError(DB 不達等インフラ級 fatal)で scheduler を自動停止する。"""
+    _patch_sessionmaker(monkeypatch)
+    runner = _RecordingRunner(fail=SchedulerHaltError("db unreachable (scheduler 停止)"))
+    notifier = _SpyNotifier()
+    sched = _FakeScheduler()
+    service = _make_service(sched, runner=runner, notifier=notifier)
+    service.add_daily_jobs()
+    assert service.registered_job_ids() == DAILY_CYCLE_JOB_IDS  # 停止前
+
+    await service._run_slot(slot="morning")  # 例外は外に漏れない
+
+    assert service.registered_job_ids() == ()  # disable() で投稿ジョブ除去
+    assert len(notifier.errors) == 1
+    assert isinstance(notifier.errors[0][0], SchedulerHaltError)
+
+
+@pytest.mark.fr("FR-113")
+async def test_run_slot_keeps_scheduler_on_non_halt_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-113: halt でない通常 FatalError では scheduler を止めない(特定 fatal のみ停止)。"""
+    _patch_sessionmaker(monkeypatch)
+    runner = _RecordingRunner(fail=FatalError("non-halting fatal"))
+    notifier = _SpyNotifier()
+    sched = _FakeScheduler()
+    service = _make_service(sched, runner=runner, notifier=notifier)
+    service.add_daily_jobs()
+
+    await service._run_slot(slot="morning")
+
+    assert service.registered_job_ids() == DAILY_CYCLE_JOB_IDS  # ジョブは残る(停止しない)
+    assert len(notifier.errors) == 1
 
 
 # --- API: GET /scheduler -----------------------------------------------------------
@@ -285,8 +336,9 @@ async def test_get_scheduler_defaults_false_when_unset() -> None:
     assert state.enabled is False
 
 
+@pytest.mark.fr("FR-071")
 async def test_get_scheduler_reads_persisted_true() -> None:
-    """app_state に ``scheduler_enabled=true`` があればそれを返す。"""
+    """FR-071: app_state に ``scheduler_enabled=true`` があればそれを返す。"""
     session = _FakeSession(flags={"scheduler_enabled": True})
 
     state = await api_scheduler.get_scheduler(session=session)  # type: ignore[arg-type]
@@ -324,8 +376,9 @@ class _SpyService:
         self.disabled_calls += 1
 
 
+@pytest.mark.fr("FR-073")
 async def test_put_scheduler_enable_audits_and_adds_jobs() -> None:
-    """false→true 切替で app_state 更新 + audit + service.enable() を行う。"""
+    """FR-073: false→true 切替で app_state 更新 + audit + service.enable() を行う。"""
     session = _FakeSession(flags={"scheduler_enabled": False})
     spy = _SpyService()
     request = _FakeRequest(spy)
@@ -405,8 +458,9 @@ async def test_put_scheduler_without_wired_service_persists_flag() -> None:
 # --- API: PUT /scheduler/mode (ADR-0035 dryrun 切替) --------------------------------
 
 
+@pytest.mark.fr("FR-060")
 async def test_put_mode_disable_dryrun_audits_dryrun_disabled() -> None:
-    """dryrun true→false (投稿開始) は audit action=dryrun_disabled で記録する (ADR-0035)。"""
+    """FR-060: dryrun true→false (投稿開始) は audit action=dryrun_disabled で記録する (ADR-0035)。"""
     session = _FakeSession(flags={"dryrun_enabled": True})
 
     state = await api_scheduler.set_mode(

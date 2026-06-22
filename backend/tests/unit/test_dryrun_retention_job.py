@@ -127,8 +127,9 @@ def _maker_for(session: _FakeSession) -> Any:
 # --- happy path --------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-062")
 async def test_expires_pending_older_than_retention_days() -> None:
-    """7 日超過の pending を auto_expired にし、 動画削除 + audit + commit する。"""
+    """FR-062: 7 日超過の pending を auto_expired にし、 動画削除 + audit + commit する。"""
     stale = _FakeOutput(
         video_uri="file:///out/a.mp4",
         created_at=_NOW - timedelta(days=RETENTION_DAYS, seconds=1),

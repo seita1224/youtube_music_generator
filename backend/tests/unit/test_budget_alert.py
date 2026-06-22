@@ -98,8 +98,9 @@ _NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 # ===========================================================================
 # 閾値跨ぎで通知が出る
 # ===========================================================================
+@pytest.mark.fr("FR-026")
 async def test_alerts_when_crossing_80_pct_first_time() -> None:
-    """80% を初めて跨いだら ERROR で 1 通知し、 dedup state を upsert + commit する。"""
+    """FR-026: 80% を初めて跨いだら ERROR で 1 通知し、 dedup state を upsert + commit する。"""
     session = FakeSession(
         _ScalarResult(Decimal("42.00")),  # SUM: 42/50 = 84%
         _RowsResult([]),  # dedup state: 未記録 → last=0

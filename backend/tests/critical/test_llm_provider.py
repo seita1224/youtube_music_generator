@@ -181,8 +181,9 @@ def _ollama_provider() -> OllamaProvider:
 # 1. OpenAI: validation 失敗 → temperature 低下リトライ → 成功
 # ===========================================================================
 @respx.mock
+@pytest.mark.fr("FR-024")
 async def test_openai_retries_on_validation_failure_with_temperature_decay() -> None:
-    """1 回目 validation 失敗 → 温度を下げて再試行 → 2 回目成功(contract §1)。"""
+    """FR-024: 1 回目 validation 失敗 → 温度を下げて再試行 → 2 回目成功(contract §1)。"""
     route = respx.post(f"{_OPENAI_BASE}{_OPENAI_RESPONSES}").mock(
         side_effect=[
             httpx.Response(200, json=_openai_body(bpm=10)),  # 失敗(bpm < 60)
@@ -301,8 +302,9 @@ async def test_anthropic_reports_cache_read_tokens() -> None:
 # ===========================================================================
 # 5. Anthropic + subscription の起動時拒否(FR-022)
 # ===========================================================================
+@pytest.mark.fr("FR-022")
 def test_anthropic_rejects_subscription_auth_mode() -> None:
-    """subscription 認証は生成時に fatal(retryable=False)で拒否する(FR-022)。"""
+    """FR-022: subscription 認証は生成時に fatal(retryable=False)で拒否する。"""
     with pytest.raises(LlmError) as exc_info:
         AnthropicProvider(
             api_key="test-key",

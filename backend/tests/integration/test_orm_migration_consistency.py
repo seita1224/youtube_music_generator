@@ -37,7 +37,9 @@ def _sync_url() -> str:
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
 
 
+@pytest.mark.fr("FR-082")
 def test_orm_matches_migration() -> None:
+    """FR-082: ORM models と alembic 実スキーマの差分ゼロ整合性ゲート。"""
     engine = create_engine(_sync_url())
 
     try:

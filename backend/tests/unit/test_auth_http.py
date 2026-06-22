@@ -46,7 +46,9 @@ def test_protected_route_with_wrong_credentials_returns_401(client: TestClient) 
     assert resp.status_code == 401
 
 
+@pytest.mark.fr("FR-085")
 def test_protected_route_with_valid_credentials_returns_200(client: TestClient) -> None:
+    """FR-085: 正しい資格情報で保護ルートが 200 を返す。"""
     resp = client.get("/protected", auth=("admin", "s3cret"))
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}

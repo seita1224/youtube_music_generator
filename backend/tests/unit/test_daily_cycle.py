@@ -464,10 +464,11 @@ async def test_dryrun_creates_dryrun_output(
     assert not notifier.error_calls
 
 
+@pytest.mark.fr("FR-001")
 async def test_post_path_uploads_when_not_dryrun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """dryrun_default=False: compliance_gate を通して uploader が呼ばれ posted になる。"""
+    """FR-001: dryrun_default=False: compliance_gate を通して uploader が呼ばれ posted になる。"""
     _install_render_stubs(monkeypatch)
     plan_id = str(uuid.uuid4())
     session = _FakeSession(genres=[_GENRE], seeded_plan=_seeded_plan(plan_id))
@@ -491,10 +492,11 @@ async def test_post_path_uploads_when_not_dryrun(
     assert not session.added_of(DryrunOutput)
 
 
+@pytest.mark.fr("FR-011")
 async def test_hit_track_is_regenerated_then_clears(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """AcoustID hit の track だけ再生成され、 全 clear 後に dryrun へ進む。"""
+    """FR-011: AcoustID hit の track だけ再生成され、 全 clear 後に dryrun へ進む。"""
     _install_render_stubs(monkeypatch)
     plan_id = str(uuid.uuid4())
     session = _FakeSession(genres=[_GENRE], seeded_plan=_seeded_plan(plan_id))

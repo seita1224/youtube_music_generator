@@ -19,7 +19,11 @@ import pytest
 
 from ymg_backend.domain.errors import ErrorCategory, QualityError
 from ymg_backend.domain.plans.schemas import DailyPost
-from ymg_backend.domain.render.title import MAX_TITLE_CHARS, render_title
+from ymg_backend.domain.render.title import (
+    _SUBTITLE_MAX_CHARS,
+    MAX_TITLE_CHARS,
+    render_title,
+)
 from ymg_backend.domain.templates.loader import GenreTemplate, TemplateCategory
 from ymg_backend.llm.base import FinisherClient, FinisherRequest, FinisherResponse, LlmUsage
 
@@ -77,8 +81,9 @@ def _daily_post(genre: str = "lo-fi hip-hop") -> DailyPost:
     )
 
 
+@pytest.mark.fr("FR-051")
 async def test_render_title_substitutes_variables_and_generates_slots() -> None:
-    """変数 ({{duration}}/{{genre}}) は context 置換、 自由文は finisher で生成される。"""
+    """FR-051: 変数 ({{duration}}/{{genre}}) は context 置換、 自由文は finisher で生成される。"""
     finisher = _FakeFinisher({"12字以内の日本語サブタイトル": "雨夜のラウンジ"})
     template = _title_template("Lo-Fi Hip Hop {{duration}}min | {{12字以内の日本語サブタイトル}}")
 
@@ -141,11 +146,15 @@ async def test_render_title_strips_generated_text() -> None:
     assert title == "Lo-Fi 30min | 夜の海"
 
 
+@pytest.mark.fr("FR-051")
 async def test_render_title_raises_quality_error_when_over_limit() -> None:
-    """60 字超過は QualityError (quality カテゴリ) を送出する (FR-051)。"""
-    long_subtitle = "あ" * MAX_TITLE_CHARS  # 単体で既に上限ぴったり、 接頭辞分で超過する
-    finisher = _FakeFinisher({"サブタイトル": long_subtitle})
-    template = _title_template("Lo-Fi Hip Hop {{duration}}min | {{サブタイトル}}")
+    """FR-051: 60 字超過は QualityError (quality カテゴリ) を送出する。
+
+    サブタイトルは 12 字以内に収め(=サブタイトル制約は満たす)、 リテラル部で 60 字を超過させて
+    タイトル全体長の検証が発火することを確認する。
+    """
+    finisher = _FakeFinisher({"サブタイトル": "あ" * _SUBTITLE_MAX_CHARS})
+    template = _title_template("x" * 55 + " {{サブタイトル}}")  # 55 + 1 + 12 = 68 字
 
     with pytest.raises(QualityError) as exc_info:
         await render_title(
@@ -161,8 +170,9 @@ async def test_render_title_raises_quality_error_when_over_limit() -> None:
 
 async def test_render_title_accepts_exactly_max_chars() -> None:
     """ちょうど 60 字は許容される (境界値、 off-by-one 防止)。"""
-    template = _title_template("{{サブタイトル}}")
-    finisher = _FakeFinisher({"サブタイトル": "あ" * MAX_TITLE_CHARS})
+    # 47(リテラル) + 1(空白) + 12(サブタイトル) = 60 字。
+    template = _title_template("x" * 47 + " {{サブタイトル}}")
+    finisher = _FakeFinisher({"サブタイトル": "あ" * _SUBTITLE_MAX_CHARS})
 
     title = await render_title(
         daily_post=_daily_post(),
@@ -172,6 +182,59 @@ async def test_render_title_accepts_exactly_max_chars() -> None:
     )
 
     assert len(title) == MAX_TITLE_CHARS
+
+
+@pytest.mark.fr("FR-051")
+async def test_render_title_rejects_subtitle_over_12_chars() -> None:
+    """FR-051: 日本語サブタイトルが 12 字を超えると QualityError(slot 制約)。"""
+    finisher = _FakeFinisher({"12字以内の日本語サブタイトル": "あ" * 13})
+    template = _title_template("Lo-Fi {{duration}}min | {{12字以内の日本語サブタイトル}}")
+
+    with pytest.raises(QualityError) as exc_info:
+        await render_title(
+            daily_post=_daily_post(),
+            genre="lo-fi hip-hop",
+            finisher=finisher,
+            template=template,
+        )
+
+    assert exc_info.value.category is ErrorCategory.QUALITY
+    assert exc_info.value.context["max_chars"] == _SUBTITLE_MAX_CHARS
+
+
+@pytest.mark.fr("FR-051")
+async def test_render_title_accepts_one_emoji() -> None:
+    """FR-051: 絵文字 1 個までは許容される。"""
+    finisher = _FakeFinisher({"サブタイトル": "夜の街", "絵文字": "🎵"})
+    template = _title_template("Lo-Fi {{duration}}min | {{サブタイトル}} {{絵文字}}")
+
+    title = await render_title(
+        daily_post=_daily_post(),
+        genre="lo-fi hip-hop",
+        finisher=finisher,
+        template=template,
+    )
+
+    assert "🎵" in title
+
+
+@pytest.mark.fr("FR-051")
+async def test_render_title_rejects_more_than_one_emoji() -> None:
+    """FR-051: 絵文字が 2 個以上だと QualityError を送出する。"""
+    # 各スロットは 12 字以内(slot 制約は満たす)だが、 最終タイトルの絵文字数が 2 になる。
+    finisher = _FakeFinisher({"サブタイトル": "夜", "絵文字": "🎵🎶"})
+    template = _title_template("Lo-Fi {{duration}}min | {{サブタイトル}} {{絵文字}}")
+
+    with pytest.raises(QualityError) as exc_info:
+        await render_title(
+            daily_post=_daily_post(),
+            genre="lo-fi hip-hop",
+            finisher=finisher,
+            template=template,
+        )
+
+    assert exc_info.value.category is ErrorCategory.QUALITY
+    assert exc_info.value.context["emoji_count"] == 2
 
 
 async def test_render_title_missing_template_field_raises_quality_error() -> None:

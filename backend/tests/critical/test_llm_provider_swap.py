@@ -163,8 +163,9 @@ async def test_create_llm_provider_returns_ollama_after_swap() -> None:
     assert isinstance(provider, OllamaProvider)
 
 
+@pytest.mark.fr("FR-020")
 async def test_create_llm_provider_defaults_to_env_openai() -> None:
-    """app_state 未上書き(session=None)では env の openai を生成する(切替の対照)。"""
+    """FR-020: app_state 未上書き(session=None)では env の openai を生成する(切替の対照)。"""
     provider = await create_llm_provider(_settings(), session=None)
 
     assert isinstance(provider, OpenAIProvider)

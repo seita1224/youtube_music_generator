@@ -82,8 +82,9 @@ def _validate(payload: dict[str, Any]) -> DailyPlan:
 # ===========================================================================
 # 1. 正常系
 # ===========================================================================
+@pytest.mark.fr("FR-023", "FR-030")
 def test_valid_plan_with_single_post_passes() -> None:
-    """辞書内ジャンル + 全制約充足で 1 投稿の DailyPlan が成立する。"""
+    """FR-023, FR-030: 辞書内ジャンル + 全制約充足で 1 投稿の DailyPlan が成立する。"""
     plan = _validate(_plan_payload())
 
     assert plan.cycle == "daily"
@@ -120,8 +121,9 @@ def test_valid_plan_accepts_optional_post_fields() -> None:
 # ===========================================================================
 # 2. 辞書外ジャンル拒否(context 照合, ADR-0032 (4))
 # ===========================================================================
+@pytest.mark.fr("FR-032")
 def test_genre_not_in_allowed_list_is_rejected() -> None:
-    """allowed_genres に無いジャンルは value_error で拒否される。"""
+    """FR-032: allowed_genres に無いジャンルは value_error で拒否される。"""
     payload = _plan_payload(posts=[_post_payload(genre="death-metal")])
 
     with pytest.raises(ValidationError) as exc_info:
@@ -178,8 +180,9 @@ def test_zero_posts_is_rejected() -> None:
     )
 
 
+@pytest.mark.fr("FR-033")
 def test_three_posts_is_rejected() -> None:
-    """posts 3 件は too_long(max_length=2)で拒否される。"""
+    """FR-033: posts 3 件は too_long(max_length=2)で拒否される。"""
     posts = [_post_payload(genre="lo-fi-hip-hop") for _ in range(3)]
 
     with pytest.raises(ValidationError) as exc_info:

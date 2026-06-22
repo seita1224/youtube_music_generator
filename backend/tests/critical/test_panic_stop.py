@@ -205,9 +205,10 @@ def _route_videos_update() -> respx.Route:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-102")
 @respx.mock
 async def test_panic_stop_disables_lists_privatizes_and_audits() -> None:
-    """panic_stop の全副作用 (1)-(6) を 1 ケースで網羅する。"""
+    """FR-102: panic_stop の全副作用 (1)-(6) を 1 ケースで網羅する。"""
     route = _route_videos_update()
     recent = [
         _make_video(youtube_video_id="vid_A", posted_at=_NOW - timedelta(hours=1)),

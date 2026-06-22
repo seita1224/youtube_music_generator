@@ -352,12 +352,13 @@ def _generator(provider: _StubWeeklyProvider) -> Any:
 # ===========================================================================
 
 
+@pytest.mark.fr("FR-035")
 @pytest.mark.asyncio
 async def test_weekly_cycle_generates_plan_and_applies_rotation(
     db_session: AsyncSession,
     seeded: dict[str, Any],
 ) -> None:
-    """週次計画生成 → 永続化 → rotation 反映 を 1 本通す。
+    """FR-035: 週次計画生成 → 永続化 → rotation 反映 を 1 本通す。
 
     1. WeeklyPlanGenerator.create_weekly_plan で 1 件の Plan(cycle="weekly") を永続化。
     2. payload が WeeklyPlan として検証でき、 genre_distribution 合計 1.0 /

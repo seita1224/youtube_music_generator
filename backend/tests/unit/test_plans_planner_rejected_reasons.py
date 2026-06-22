@@ -19,6 +19,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ymg_backend.domain.plans.planner import PlanGenerator
 from ymg_backend.domain.plans.schemas import (
     REJECTED_REASONS_CONTEXT_KEY,
@@ -145,8 +147,9 @@ def _user_prompt(provider: _StubProvider) -> str:
     return str(user_msg.content)
 
 
+@pytest.mark.fr("FR-063")
 async def test_explicit_rejected_reasons_injected_into_prompt() -> None:
-    """明示の rejected_reasons が user prompt の却下理由節に展開される。"""
+    """FR-063: 明示の rejected_reasons が user prompt の却下理由節に展開される。"""
     provider = _StubProvider(_make_plan())
     planner = _planner(provider)
     reasons = ["音質が低い (ホワイトノイズ)", "サムネが地味すぎる"]

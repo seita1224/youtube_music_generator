@@ -104,8 +104,9 @@ def _daily_post() -> DailyPost:
     )
 
 
+@pytest.mark.fr("FR-053")
 async def test_render_description_includes_static_blocks_verbatim() -> None:
-    """AI 開示 / チャンネル宣伝は _shared の逐語が含まれる (FR-053)。"""
+    """FR-053: AI 開示 / チャンネル宣伝は _shared の逐語が含まれる。"""
     shared = _load_shared()
     out = await render_description(
         daily_post=_daily_post(),
@@ -120,8 +121,9 @@ async def test_render_description_includes_static_blocks_verbatim() -> None:
     assert "Subscribe for daily lo-fi" in out
 
 
+@pytest.mark.fr("FR-052")
 async def test_render_description_builds_six_chapter_lines() -> None:
-    """チャプターは 6 行 + ヘッダ。 タイムスタンプが 5 分刻みで英 / 日タイトル付き。"""
+    """FR-052: チャプターは 6 行 + ヘッダ。 タイムスタンプが 5 分刻みで英 / 日タイトル付き。"""
     out = await render_description(
         daily_post=_daily_post(),
         genre="lo-fi hip-hop",
@@ -140,8 +142,9 @@ async def test_render_description_builds_six_chapter_lines() -> None:
     assert "0:00 EnTitle1 / 邦題1" in out
 
 
+@pytest.mark.fr("FR-052")
 async def test_render_description_has_three_hashtags() -> None:
-    """ハッシュタグ 3 個 (ジャンル 2 + シーン 1) が末尾に並ぶ。"""
+    """FR-052: ハッシュタグ 3 個 (ジャンル 2 + シーン 1) が末尾に並ぶ。"""
     out = await render_description(
         daily_post=_daily_post(),
         genre="lo-fi hip-hop",
@@ -156,8 +159,9 @@ async def test_render_description_has_three_hashtags() -> None:
     assert len(re.findall(r"#\w+", out)) == 3
 
 
+@pytest.mark.fr("FR-050")
 async def test_render_description_leaves_no_unresolved_placeholders() -> None:
-    """未解決の {{...}} プレースホルダが残らない。"""
+    """FR-050: 実 default.yaml を TemplateLoader で読み、全 {{...}} が解決される。"""
     out = await render_description(
         daily_post=_daily_post(),
         genre="lo-fi hip-hop",
@@ -181,6 +185,55 @@ async def test_render_description_missing_shared_block_raises_quality_error() ->
             template=_load_template(),
             shared={"channel_promo": "x"},  # ai_disclosure 欠落
         )
+
+
+class _SentinelFinisher(FinisherClient):
+    """全 instruction に対し固定の番兵文字列だけを返す FinisherClient。
+
+    AI 開示文を一切生成しないため、出力に開示文が含まれれば「LLM 生成ではなく shared
+    逐語注入で入った」ことの証拠になる (FR-053)。 ハッシュタグ等は番兵で埋まり開示文とは
+    重ならない。
+    """
+
+    SENTINEL = "LLM_NEVER_WRITES_DISCLOSURE"
+
+    def __init__(self) -> None:
+        self.calls: list[FinisherRequest] = []
+
+    async def render(self, req: FinisherRequest) -> FinisherResponse:
+        self.calls.append(req)
+        return FinisherResponse(text=self.SENTINEL, usage=_ZERO_USAGE)
+
+
+@pytest.mark.fr("FR-053")
+async def test_ai_disclosure_is_shared_verbatim_not_llm_generated() -> None:
+    """FR-053: AI 開示固定文は shared 逐語で挿入され、仕上げ LLM 生成に依存しない。
+
+    finisher が開示文言を一切生成しない (番兵だけ返す) 場合でも、開示文の英 / 日の特徴行が
+    出力に逐語で含まれることを示す。 これは開示文が ``shared`` マッピング (TemplateLoader が
+    読んだ ``_shared/ai_disclosure.txt``) 経由で注入され、LLM 出力経路を通らないため。
+    """
+    shared = _load_shared()
+    finisher = _SentinelFinisher()
+    out = await render_description(
+        daily_post=_daily_post(),
+        genre="lo-fi hip-hop",
+        finisher=finisher,
+        template=_load_template(),
+        shared=shared,
+    )
+
+    # finisher は確かに呼ばれているが、開示文は一切生成していない (番兵のみ)。
+    assert finisher.calls, "finisher should still be invoked for chapters/hashtags"
+    assert all(c is not None for c in finisher.calls)
+
+    # それでも shared の開示文が英 / 日とも逐語で出力に含まれる。
+    disclosure = shared["ai_disclosure"]
+    assert "AI-generated using ACE-Step" in disclosure  # 前提: 番兵には含まれない
+    assert "AI-generated using ACE-Step" in out
+    assert "第三者の著作物は含まれません" in out
+    # 開示文そのものは LLM 番兵の影響を受けず、原文ブロックがそのまま入る。
+    assert disclosure.strip() in out
 
 
 async def test_render_description_uses_description_directive_in_finisher() -> None:

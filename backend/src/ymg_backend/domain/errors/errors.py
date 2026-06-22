@@ -55,12 +55,26 @@ _CATEGORY_NOTIFICATION_LEVEL: Final[Mapping[ErrorCategory, NotificationLevel]] =
 )
 
 # --- 通知レベル → Slack prefix のマッピング ([FATAL] 等) ---------------------------
+# notify(level=...) 経路(エラーカテゴリを伴わない budget アラート等)で使用する。
 _LEVEL_SLACK_PREFIX: Final[Mapping[NotificationLevel, str]] = MappingProxyType(
     {
         NotificationLevel.INFO: "[INFO]",
         NotificationLevel.WARN: "[WARN]",
         NotificationLevel.ERROR: "[ERROR]",
         NotificationLevel.CRITICAL: "[FATAL]",
+    }
+)
+
+# --- カテゴリ → Slack prefix のマッピング (FR-114) -----------------------------------
+# spec.md / Clarifications はカテゴリ名 prefix を要求する(level ベースではなく category 名で
+# 識別する)。 notify_error はこの写像でカテゴリ名 prefix を付与する。
+_CATEGORY_SLACK_PREFIX: Final[Mapping[ErrorCategory, str]] = MappingProxyType(
+    {
+        ErrorCategory.TRANSIENT: "[TRANSIENT]",
+        ErrorCategory.RECOVERABLE: "[RECOVERABLE]",
+        ErrorCategory.QUALITY: "[QUALITY]",
+        ErrorCategory.FATAL: "[FATAL]",
+        ErrorCategory.COMPLIANCE: "[COMPLIANCE]",
     }
 )
 
@@ -127,6 +141,19 @@ class FatalError(YmgError):
     category = ErrorCategory.FATAL
 
 
+class SchedulerHaltError(FatalError):
+    """scheduler 全体の停止を要する致命障害(FR-113).
+
+    ``FatalError`` のうち、 当該サイクルの中断だけでなく **scheduler の自動停止**(投稿系ジョブの
+    除去)まで必要なインフラ級 fatal を表す。 例: DB 不達(記録自体が信頼できない)、 PostgreSQL
+    ダンプ失敗、 AcoustID API ダウンのリトライ枯渇。 翌日の cron を空振りさせず人手の介入を促す。
+
+    一方、 個別 post の content fatal(計画解決不能など)は通常の :class:`FatalError` とし、
+    当該サイクルの中断に留める(scheduler は継続)。 scheduler の job wrapper が本例外を捕捉して
+    ``disable()`` を呼ぶ(:mod:`ymg_backend.infrastructure.scheduler`)。
+    """
+
+
 class ComplianceError(YmgError):
     """コンプラ違反(containsSyntheticMedia 未設定・AcoustID マッチ・プロンプトポリシー違反).
 
@@ -180,17 +207,19 @@ def notification_level_for(category: ErrorCategory) -> NotificationLevel:
 
 
 def slack_prefix_for(category: ErrorCategory) -> str:
-    """カテゴリに対応する Slack 通知 prefix(``[FATAL]`` 等)を返す.
+    """カテゴリに対応する Slack 通知 prefix(``[FATAL]`` 等)を返す (FR-114).
 
-    通知レベル経由で解決する(``fatal`` → ``CRITICAL`` → ``[FATAL]``)。
+    spec.md / Clarifications に従い**カテゴリ名 prefix** を返す
+    (``transient`` → ``[TRANSIENT]`` 等)。 level ベースではない。
 
     Args:
         category: 対象カテゴリ。
 
     Returns:
-        ``[INFO]`` / ``[WARN]`` / ``[ERROR]`` / ``[FATAL]`` のいずれか。
+        ``[TRANSIENT]`` / ``[RECOVERABLE]`` / ``[QUALITY]`` / ``[FATAL]`` /
+        ``[COMPLIANCE]`` のいずれか。
     """
-    return _LEVEL_SLACK_PREFIX[notification_level_for(category)]
+    return _CATEGORY_SLACK_PREFIX[category]
 
 
 def slack_prefix_for_exc(exc: BaseException) -> str:
@@ -200,6 +229,6 @@ def slack_prefix_for_exc(exc: BaseException) -> str:
         exc: 対象の例外。
 
     Returns:
-        ``[INFO]`` / ``[WARN]`` / ``[ERROR]`` / ``[FATAL]`` のいずれか。
+        カテゴリ名 prefix(``[TRANSIENT]`` 等、 :func:`slack_prefix_for` 参照)。
     """
     return slack_prefix_for(resolve_category(exc))

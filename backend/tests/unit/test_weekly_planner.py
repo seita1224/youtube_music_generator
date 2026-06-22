@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from ymg_backend.domain.errors import QualityError
 from ymg_backend.domain.plans.schemas import (
@@ -124,8 +125,9 @@ def _generator(provider: _StubProvider, *, window_days: int = 14) -> Any:
 # ===========================================================================
 
 
+@pytest.mark.fr("FR-031", "FR-034")
 async def test_generate_returns_validated_plan_and_usage() -> None:
-    """session=None でも provider 出力を検証済み WeeklyPlan + usage として返す。"""
+    """FR-031, FR-034: session=None でも provider 出力を検証済み WeeklyPlan + usage として返す。"""
     provider = _StubProvider(_make_weekly_plan())
     generator = _generator(provider)
 
@@ -206,3 +208,50 @@ async def test_referenced_metrics_window_matches_generator_window() -> None:
         result.model_dump(), context={ALLOWED_GENRES_CONTEXT_KEY: _ALLOWED_GENRES}
     )
     assert rebuilt.referenced_metrics.window_days == 14
+
+
+# ===========================================================================
+# genre_distribution 合計制約 (FR-034 失敗系: 1.0±0.01 を外れると拒否)
+# ===========================================================================
+
+
+@pytest.mark.fr("FR-034")
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        {"lo-fi hip-hop": 0.7, "chillhop": 0.2},  # 合計 0.9 (下振れ)
+        {"lo-fi hip-hop": 0.7, "chillhop": 0.4},  # 合計 1.1 (上振れ)
+    ],
+)
+def test_weekly_plan_rejects_distribution_sum_outside_tolerance(
+    distribution: dict[str, float],
+) -> None:
+    """FR-034: genre_distribution 合計が 1.0±0.01 を外れると value_error で拒否する。
+
+    ``WeeklyPlan`` スキーマを直接 ``model_validate`` し、 ``genre_distribution`` の
+    sum 制約 (``abs(total - 1.0) > 0.01``) が負経路で発火することを確認する。 辞書照合は
+    context 未指定 (allowed 空扱い) でスキップし、 合計制約のみを孤立させる。
+    """
+    payload = _make_weekly_plan(distribution={"lo-fi hip-hop": 0.7, "chillhop": 0.3}).model_dump()
+    payload["genre_distribution"] = distribution
+
+    with pytest.raises(ValidationError) as exc_info:
+        WeeklyPlan.model_validate(payload)  # context なし → 辞書照合スキップ
+
+    errors = exc_info.value.errors()
+    assert any(
+        err["loc"] == ("genre_distribution",)
+        and err["type"] == "value_error"
+        and "sum to 1.0" in err["msg"]
+        for err in errors
+    )
+
+
+@pytest.mark.fr("FR-034")
+def test_weekly_plan_accepts_distribution_within_tolerance() -> None:
+    """FR-034: 合計が 1.0±0.01 の許容内 (例 0.995) は受理される(正経路の対照)。"""
+    payload = _make_weekly_plan(distribution={"lo-fi hip-hop": 0.7, "chillhop": 0.3}).model_dump()
+    payload["genre_distribution"] = {"lo-fi hip-hop": 0.695, "chillhop": 0.3}  # 合計 0.995
+
+    plan = WeeklyPlan.model_validate(payload)
+    assert abs(sum(plan.genre_distribution.values()) - 1.0) <= 0.01

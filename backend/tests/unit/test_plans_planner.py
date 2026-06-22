@@ -110,8 +110,9 @@ def _planner(provider: _StubProvider) -> PlanGenerator:
 # ===========================================================================
 # generate_daily_plan(session=None 経路、 集計スキップ)
 # ===========================================================================
+@pytest.mark.fr("FR-030")
 async def test_generate_returns_validated_plan_and_usage() -> None:
-    """session=None でも provider 出力を検証済み DailyPlan + usage として返す。"""
+    """FR-030: session=None でも provider 出力を検証済み DailyPlan + usage として返す。"""
     provider = _StubProvider(_make_plan())
     planner = _planner(provider)
 
@@ -126,8 +127,9 @@ async def test_generate_returns_validated_plan_and_usage() -> None:
     assert provider.requests, "planner must call provider.generate"
 
 
+@pytest.mark.fr("FR-036")
 async def test_generate_injects_allowed_genres_into_user_prompt() -> None:
-    """許可ジャンルを user prompt に注入する(provider は context なしのため prompt 経由)。"""
+    """FR-036: 許可ジャンルを user prompt に注入する(provider は context なしのため prompt 経由)。"""
     provider = _StubProvider(_make_plan())
     planner = _planner(provider)
 
@@ -144,8 +146,9 @@ async def test_generate_injects_allowed_genres_into_user_prompt() -> None:
     assert req.prompt_version == "planner/system_v1"
 
 
+@pytest.mark.fr("FR-027")
 async def test_generate_uses_system_prompt_message() -> None:
-    """system メッセージに planner system prompt 本文を載せ、 cacheable=True にする。"""
+    """FR-027: system メッセージに planner system prompt 本文を載せ、 cacheable=True にする。"""
     provider = _StubProvider(_make_plan())
     planner = _planner(provider)
 

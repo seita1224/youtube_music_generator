@@ -122,8 +122,9 @@ async def test_render_rejects_overflow(tmp_path: Path) -> None:
         await finisher.render(req)
 
 
+@pytest.mark.fr("FR-041")
 async def test_finish_batch_expands_all_slots(tmp_path: Path) -> None:
-    """テンプレ内の全 GenerativeSlot を 1 回の呼び出しで展開する。"""
+    """FR-041: テンプレ内の全 GenerativeSlot を 1 回の呼び出しで展開する。"""
     parsed = parse_template("{{12字サブタイトル}} / {{絵文字1個}}")
     # 出現順に gen_0 / gen_1 が採番される。
     provider = _FakeProvider({"slots": {"gen_0": " 雨夜のラウンジ ", "gen_1": "🌧"}})
@@ -163,3 +164,37 @@ async def test_finish_renderable_with_render_template(tmp_path: Path) -> None:
     generated = await finisher.finish(parsed, {"genre": "Lo-Fi Hip Hop"})
     rendered = render_template(parsed, context={"genre": "Lo-Fi Hip Hop"}, generated=generated)
     assert rendered == "Lo-Fi Hip Hop: 雨夜のラウンジ"
+
+
+@pytest.mark.fr("FR-042")
+async def test_render_caps_max_tokens_for_cheap_budget(tmp_path: Path) -> None:
+    """FR-042: 仕上げ LLM 呼び出しは安価運用のため max_tokens を絞り、低温で finisher 文脈を立てる。
+
+    finisher は planner と同じ provider を共有しつつ ``max_tokens`` を上限で頭打ちにする
+    (運用早見表「安価用途 (finisher) も同 provider を使い max_tokens を絞る」, ADR-0024)。
+    fake provider が受け取った ``LlmRequest`` を検査し、(1) max_tokens が設定され既定上限
+    (256) を超えないこと、(2) 文字数上限に応じて予算が縮むこと、(3) temperature が決定論寄り
+    (1.0 未満)、(4) context_type='finisher' で usage_log のコスト按分に乗ることを確認する。
+    """
+    provider = _FakeProvider({"text": "雨夜のラウンジ"})
+    finisher = LlmFinisher(provider, prompt_loader=_prompt_loader(tmp_path))
+
+    # 小さな max_chars: 予算は (max_chars * 2 + 64) と既定上限 256 の小さい方に収まる。
+    small_req = FinisherRequest(instruction="12字以内", context={}, max_chars=12)
+    await finisher.render(small_req)
+    assert provider.last_request is not None
+    small_max_tokens = provider.last_request.max_tokens
+    assert small_max_tokens is not None
+    assert small_max_tokens <= 256  # 安価上限 (_DEFAULT_MAX_TOKENS) を超えない
+    assert small_max_tokens == 12 * 2 + 64  # 文字数上限に比例した最小予算
+    assert provider.last_request.temperature < 1.0  # 過度な発散を避ける
+    assert provider.last_request.context_type == "finisher"  # コスト按分の文脈タグ
+
+    # 大きな max_chars でも既定上限で頭打ちになる (青天井にしない)。
+    big_req = FinisherRequest(instruction="長文", context={}, max_chars=10_000)
+    await finisher.render(big_req)
+    assert provider.last_request is not None
+    assert provider.last_request.max_tokens == 256
+    # 文字数が増えても予算は減りこそすれ増えない (上限で固定)。
+    assert provider.last_request.max_tokens is not None
+    assert small_max_tokens <= provider.last_request.max_tokens

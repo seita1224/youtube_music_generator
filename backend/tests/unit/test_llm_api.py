@@ -172,8 +172,9 @@ async def test_set_provider_anthropic_subscription_is_400() -> None:
     assert session.audit_rows == []
 
 
+@pytest.mark.fr("FR-021")
 async def test_set_provider_codex_oauth_non_openai_is_400() -> None:
-    """codex_oauth は openai のみ。 ollama + codex_oauth は 400。"""
+    """FR-021: codex_oauth は openai のみ。 ollama + codex_oauth は 400。"""
     session = _FakeSession()
 
     with pytest.raises(HTTPException) as exc:

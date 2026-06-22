@@ -49,6 +49,20 @@ GOOGLE_TOKEN_URI: Final[str] = "https://oauth2.googleapis.com/token"
 
 # 投稿に必要な OAuth スコープ (videos.insert)。
 YOUTUBE_UPLOAD_SCOPE: Final[str] = "https://www.googleapis.com/auth/youtube.upload"
+# 動画管理スコープ (privacyStatus 変更 = panic-stop の private 化, FR-102 / FR-112)。
+YOUTUBE_MANAGE_SCOPE: Final[str] = "https://www.googleapis.com/auth/youtube"
+# Analytics 読取スコープ (週次 retention/views/視聴時間/トラフィックソース取得, FR-101)。
+YOUTUBE_ANALYTICS_SCOPE: Final[str] = (
+    "https://www.googleapis.com/auth/yt-analytics.readonly"
+)
+# FR-100: 本システムが OAuth 認可で要求するスコープ一式 (upload + 管理 + analytics 読取)。
+# upload のみでは FR-101 の Analytics API / FR-102 の privacy 変更が権限不足になるため、
+# 認可フローでは必ずこの 3 スコープを要求する (ADR-0021)。
+YOUTUBE_SCOPES: Final[tuple[str, ...]] = (
+    YOUTUBE_UPLOAD_SCOPE,
+    YOUTUBE_MANAGE_SCOPE,
+    YOUTUBE_ANALYTICS_SCOPE,
+)
 
 # access token の失効前バッファ。 残り時間がこれを切ったら事前に refresh する。
 _REFRESH_LEEWAY: Final[timedelta] = timedelta(minutes=5)
@@ -172,7 +186,7 @@ class YouTubeOAuth:
             token_uri=GOOGLE_TOKEN_URI,
             client_id=self._settings.youtube_client_id,
             client_secret=self._settings.youtube_client_secret.get_secret_value(),
-            scopes=list(scopes) or [YOUTUBE_UPLOAD_SCOPE],
+            scopes=list(scopes) or list(YOUTUBE_SCOPES),
             expiry=expiry.replace(tzinfo=None) if expiry is not None else None,
         )
 
@@ -261,7 +275,9 @@ async def run_oauth_flow(
             "token_uri": GOOGLE_TOKEN_URI,
         }
     }
-    flow = InstalledAppFlow.from_client_config(client_config, scopes=[YOUTUBE_UPLOAD_SCOPE])
+    flow = InstalledAppFlow.from_client_config(
+        client_config, scopes=list(YOUTUBE_SCOPES)
+    )
     # access_type=offline + prompt=consent で確実に refresh token を取得する。
     credentials = flow.run_local_server(
         port=port,
@@ -308,7 +324,7 @@ async def _upsert_credential(
 
     access_encrypted = cipher.encrypt(str(credentials.token or ""))
     refresh_encrypted = cipher.encrypt(str(credentials.refresh_token))
-    scopes = list(credentials.scopes) if credentials.scopes else [YOUTUBE_UPLOAD_SCOPE]
+    scopes = list(credentials.scopes) if credentials.scopes else list(YOUTUBE_SCOPES)
     expires_at = _to_aware_utc(credentials.expiry)
 
     if record is None:

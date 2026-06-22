@@ -32,12 +32,13 @@ def _ok_health(worker_version: str) -> httpx.Response:
     )
 
 
+@pytest.mark.fr("FR-091")
 @pytest.mark.parametrize(
     ("base_url", "worker_version"),
     [(_BASE_URL_A, "a"), (_BASE_URL_B, "b")],
 )
 async def test_client_requests_only_its_own_base_url(base_url: str, worker_version: str) -> None:
-    """同一コードで base URL だけ変えると、 リクエストはその URL にのみ出る。"""
+    """FR-091: 同一コードで base URL だけ変えると、 リクエストはその URL にのみ出る。"""
     other = _BASE_URL_B if base_url == _BASE_URL_A else _BASE_URL_A
     with respx.mock(assert_all_called=False) as router:
         own = router.get(f"{base_url}/health").mock(return_value=_ok_health(worker_version))

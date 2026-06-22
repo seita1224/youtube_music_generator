@@ -91,8 +91,9 @@ async def test_client_built_from_settings_hits_configured_base_url() -> None:
     assert str(sent.url) == f"{_BASE_URL_A}/health"
 
 
+@pytest.mark.fr("FR-094")
 async def test_swapping_settings_base_url_redirects_without_code_change() -> None:
-    """``Settings.gpu_worker_base_url`` を A→B に変えるだけで宛先が B に切替わる。
+    """FR-094: ``Settings.gpu_worker_base_url`` を A→B に変えるだけで宛先が B に切替わる。
 
     backend 側の構築コード ``GpuWorkerClient(settings.gpu_worker_base_url)`` は 2 回とも同一。
     変えるのは ``Settings`` が運ぶ URL のみ。 これが env ``GPU_WORKER_BASE_URL`` 切替だけで
@@ -121,10 +122,11 @@ async def test_swapping_settings_base_url_redirects_without_code_change() -> Non
     assert str(route_b.calls.last.request.url) == f"{_BASE_URL_B}/health"
 
 
+@pytest.mark.fr("FR-092")
 async def test_base_url_flows_from_env_via_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """env ``GPU_WORKER_BASE_URL`` → ``Settings`` → client の宛先まで一貫することを確認する。
+    """FR-092: env ``GPU_WORKER_BASE_URL`` → ``Settings`` → client の宛先まで一貫することを確認する。
 
     切替を運用で行うのは env なので、 env 経由でも宛先が URL-B になることを実証する
     (kwargs 直指定と env 指定が等価で、 config.py:79 の写像が効いていることの裏取り)。

@@ -20,9 +20,14 @@ from pydantic import SecretStr
 
 from ymg_backend.domain.errors.errors import (
     ComplianceError,
+    ErrorCategory,
     FatalError,
     NotificationLevel,
+    QualityError,
     RecoverableError,
+    TransientError,
+    YmgError,
+    slack_prefix_for,
 )
 
 # 未実装モジュール (TDD RED 段階)。 import 失敗時は本ファイルを skip する。
@@ -32,7 +37,8 @@ notifier_mod = pytest.importorskip("ymg_backend.infrastructure.slack.notifier")
 
 _WEBHOOK = "https://hooks.slack.test/services/T000/B000/XXXX"
 
-pytestmark = pytest.mark.asyncio
+# asyncio_mode="auto" (pyproject) が coroutine テストを自動 marker するため、 module 全体への
+# 明示 asyncio mark は張らない (同期の FR-114 spec test に asyncio mark が漏れるのを避ける)。
 
 
 async def test_notify_with_none_webhook_is_noop() -> None:
@@ -53,8 +59,9 @@ async def test_notify_with_empty_secret_is_noop() -> None:
         assert route.call_count == 0
 
 
+@pytest.mark.fr("FR-114")
 async def test_notify_posts_message_to_webhook() -> None:
-    """webhook 設定時は webhook URL へ POST し、 本文に message を含める。"""
+    """FR-114: webhook 設定時は単一 webhook URL へ POST し、 本文に message を含める。"""
     notifier = notifier_mod.SlackNotifier(SecretStr(_WEBHOOK))
     with respx.mock as router:
         route = router.post(_WEBHOOK).mock(return_value=httpx.Response(200, text="ok"))
@@ -68,19 +75,21 @@ async def test_notify_posts_message_to_webhook() -> None:
         assert "something broke" in sent
 
 
-async def test_notify_error_uses_error_prefix_for_compliance() -> None:
-    """ComplianceError は [ERROR] prefix で通知される (slack_prefix_for 準拠)。"""
+@pytest.mark.fr("FR-114")
+async def test_notify_error_uses_compliance_prefix_for_compliance() -> None:
+    """FR-114: ComplianceError はカテゴリ名 prefix [COMPLIANCE] で通知される。"""
     notifier = notifier_mod.SlackNotifier(SecretStr(_WEBHOOK))
     with respx.mock as router:
         route = router.post(_WEBHOOK).mock(return_value=httpx.Response(200))
         await notifier.notify_error(ComplianceError("synthetic media flag missing"))
         assert route.call_count == 1
         sent = route.calls.last.request.read().decode()
-        assert "[ERROR]" in sent
+        assert "[COMPLIANCE]" in sent
 
 
+@pytest.mark.fr("FR-114")
 async def test_notify_error_uses_fatal_prefix_for_fatal() -> None:
-    """FatalError は [FATAL] prefix で通知される。"""
+    """FR-114: FatalError はカテゴリ prefix [FATAL] を冒頭に付けて通知される。"""
     notifier = notifier_mod.SlackNotifier(SecretStr(_WEBHOOK))
     with respx.mock as router:
         route = router.post(_WEBHOOK).mock(return_value=httpx.Response(200))
@@ -89,11 +98,64 @@ async def test_notify_error_uses_fatal_prefix_for_fatal() -> None:
         assert "[FATAL]" in route.calls.last.request.read().decode()
 
 
-async def test_notify_error_uses_warn_prefix_for_recoverable() -> None:
-    """RecoverableError は [WARN] prefix で通知される。"""
+@pytest.mark.fr("FR-114")
+async def test_notify_error_uses_recoverable_prefix_for_recoverable() -> None:
+    """FR-114: RecoverableError はカテゴリ名 prefix [RECOVERABLE] で通知される。"""
     notifier = notifier_mod.SlackNotifier(SecretStr(_WEBHOOK))
     with respx.mock as router:
         route = router.post(_WEBHOOK).mock(return_value=httpx.Response(200))
         await notifier.notify_error(RecoverableError("oauth token expired"))
         assert route.call_count == 1
-        assert "[WARN]" in route.calls.last.request.read().decode()
+        assert "[RECOVERABLE]" in route.calls.last.request.read().decode()
+
+
+# --- FR-115: fatal / compliance のみ <!channel> mention --------------------------
+
+_MENTION_CASES = [
+    pytest.param(FatalError, True, id="fatal->mention"),
+    pytest.param(ComplianceError, True, id="compliance->mention"),
+    pytest.param(TransientError, False, id="transient->no-mention"),
+    pytest.param(RecoverableError, False, id="recoverable->no-mention"),
+    pytest.param(QualityError, False, id="quality->no-mention"),
+]
+
+
+@pytest.mark.fr("FR-115")
+@pytest.mark.parametrize(("exc_type", "expects_mention"), _MENTION_CASES)
+async def test_notify_error_channel_mention_only_for_fatal_and_compliance(
+    exc_type: type[YmgError], expects_mention: bool
+) -> None:
+    """FR-115: fatal / compliance のみ送信本文に <!channel> mention を含める。
+
+    respx で実送信 body を捕捉し、 mention の有無をカテゴリ別に検証する。
+    """
+    notifier = notifier_mod.SlackNotifier(SecretStr(_WEBHOOK))
+    with respx.mock as router:
+        route = router.post(_WEBHOOK).mock(return_value=httpx.Response(200))
+        await notifier.notify_error(exc_type("boom"))
+        assert route.call_count == 1
+        sent = route.calls.last.request.read().decode()
+        assert ("<!channel>" in sent) is expects_mention
+
+
+# --- FR-114: prefix は spec.md のカテゴリ名 -----------------------------------------
+#
+# spec.md / Clarifications はカテゴリ名 prefix [FATAL] / [COMPLIANCE] / [TRANSIENT] /
+# [RECOVERABLE] / [QUALITY] を要求する。 実装(slack_prefix_for)はこの写像どおりに返す。
+
+_SPEC_CATEGORY_PREFIX_CASES = [
+    pytest.param(ErrorCategory.FATAL, "[FATAL]", id="fatal->[FATAL]"),
+    pytest.param(ErrorCategory.COMPLIANCE, "[COMPLIANCE]", id="compliance->[COMPLIANCE]"),
+    pytest.param(ErrorCategory.TRANSIENT, "[TRANSIENT]", id="transient->[TRANSIENT]"),
+    pytest.param(ErrorCategory.RECOVERABLE, "[RECOVERABLE]", id="recoverable->[RECOVERABLE]"),
+    pytest.param(ErrorCategory.QUALITY, "[QUALITY]", id="quality->[QUALITY]"),
+]
+
+
+@pytest.mark.fr("FR-114")
+@pytest.mark.parametrize(("category", "spec_prefix"), _SPEC_CATEGORY_PREFIX_CASES)
+def test_slack_prefix_uses_spec_category_names(
+    category: ErrorCategory, spec_prefix: str
+) -> None:
+    """FR-114: prefix は spec.md のカテゴリ名([COMPLIANCE]/[TRANSIENT] 等)である。"""
+    assert slack_prefix_for(category) == spec_prefix

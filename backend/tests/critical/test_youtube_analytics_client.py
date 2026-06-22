@@ -201,9 +201,10 @@ def _route_analytics(*, response: dict[str, Any]) -> respx.Route:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-101")
 @respx.mock
 async def test_fetch_and_upsert_parses_all_metrics() -> None:
-    """retention / views / minutes / avg_duration / impressions / ctr / traffic_sources
+    """FR-101: retention / views / minutes / avg_duration / impressions / ctr / traffic_sources
     をすべて解析し、 analytics_daily へ upsert する。 返り値 = 件数。
     """
     metric_date = date(2026, 6, 15)

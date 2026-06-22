@@ -50,6 +50,7 @@ from ymg_backend.domain.errors.errors import (
     FatalError,
     NotificationLevel,
     RecoverableError,
+    SchedulerHaltError,
     YmgError,
     resolve_category,
 )
@@ -273,6 +274,11 @@ class DailyCycleOrchestrator:
                 outcome = await self._process_post(
                     session=session, post=post, daily_post=daily_post
                 )
+            except SchedulerHaltError:
+                # FR-113: インフラ級 fatal はサイクル中断に留めず、 scheduler 停止のため
+                # 上位 (scheduler job wrapper) へ伝播させる。 通知/停止は wrapper が行う。
+                log.error("daily cycle halted scheduler", post_id=str(post.id))
+                raise
             except FatalError as exc:
                 await self._record_post_failure(session, post, exc)
                 await self._notifier.notify_error(exc, context={"post_id": str(post.id)})
@@ -281,13 +287,11 @@ class DailyCycleOrchestrator:
                 log.error("daily cycle aborted by fatal error", post_id=str(post.id))
                 break
             except SQLAlchemyError as exc:
-                # DB 不達はサイクル継続不能 (記録自体が信頼できない)。 fatal 昇格して停止。
-                fatal = FatalError("DB 操作に失敗しました", original=exc)
-                await self._notifier.notify_error(fatal, context={"post_id": str(post.id)})
-                failed_count += 1
-                had_fatal = True
-                log.error("daily cycle aborted by db error", post_id=str(post.id))
-                break
+                # DB 不達はサイクル継続不能かつ記録自体が信頼できない。 FR-113: scheduler を止める
+                # べきインフラ級 fatal として上位へ伝播させる (翌日 cron を空振りさせない)。
+                raise SchedulerHaltError(
+                    "DB 操作に失敗しました (scheduler 停止)", original=exc
+                ) from exc
             except YmgError as exc:
                 await self._record_post_failure(session, post, exc)
                 await self._notifier.notify_error(exc, context={"post_id": str(post.id)})

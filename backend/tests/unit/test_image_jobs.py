@@ -154,8 +154,9 @@ async def test_submit_and_wait_returns_output_uri_on_success() -> None:
     assert post.thumbnail_uri is None
 
 
+@pytest.mark.fr("FR-004")
 async def test_submit_builds_prompt_from_visual_direction() -> None:
-    """ImageGenerateRequest.prompt は visual_direction を主軸に構築される。"""
+    """FR-004: ImageGenerateRequest.prompt は visual_direction を主軸に構築される。"""
     job_id = "job-img-2"
     out_uri = "file:///srv/ymg/outputs/images/p/background.png"
     client = FakeGpuClient(job_id=job_id, statuses=[_succeeded(job_id, out_uri)])

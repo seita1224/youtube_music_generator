@@ -27,7 +27,9 @@ from ymg_backend.domain.directive import (
 # --- 分類: 変数参照 ----------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-040")
 def test_single_identifier_is_variable() -> None:
+    """FR-040: 単一識別子 ``{{genre}}`` は変数参照として分類される。"""
     parsed = parse_template("{{genre}}")
     assert parsed.variable_names == ("genre",)
     assert parsed.generative_slots == ()
@@ -47,7 +49,9 @@ def test_variable_body_is_stripped() -> None:
     assert parsed.generative_slots == ()
 
 
+@pytest.mark.fr("FR-041")
 def test_render_resolves_variable_from_context() -> None:
+    """FR-041: 変数参照は context dict の値で解決される。"""
     parsed = parse_template("genre: {{genre}}")
     rendered = render_template(parsed, context={"genre": "lofi"}, generated={})
     assert rendered == "genre: lofi"

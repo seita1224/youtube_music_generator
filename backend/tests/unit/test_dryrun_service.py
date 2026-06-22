@@ -156,8 +156,10 @@ def _service(uploader: Any, storage: _FakeStorage) -> Any:
 # --- approve ----------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-061")
 @pytest.mark.asyncio
 async def test_approve_uploads_and_sets_posted() -> None:
+    """FR-061: pending を approve すると uploader.upload を呼び posted に遷移する。"""
     session, output, post = _make_pair()
     storage = _FakeStorage({output.video_uri})
     uploader = _StubUploader("yt-xyz")
@@ -193,8 +195,10 @@ async def test_approve_non_pending_conflict() -> None:
 # --- reject -----------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-061")
 @pytest.mark.asyncio
 async def test_reject_saves_reason_and_deletes_video() -> None:
+    """FR-061: reject は reason を保存し video を削除して rejected に遷移する。"""
     session, output, _ = _make_pair()
     storage = _FakeStorage({output.video_uri})
     reason = "ノイズが目立つため不採用"

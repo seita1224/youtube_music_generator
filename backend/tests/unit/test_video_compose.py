@@ -75,8 +75,9 @@ def test_build_command_has_one_input_per_audio_plus_background() -> None:
     assert cmd[-1] == "/tmp/out.mp4"
 
 
+@pytest.mark.fr("FR-005")
 def test_build_command_filter_uses_acrossfade_and_showwaves() -> None:
-    """filter_complex に acrossfade (連結) と showwaves (波形 overlay) が含まれる。"""
+    """FR-005: filter_complex に acrossfade (連結) と showwaves (波形 overlay) が含まれる。"""
     cmd = build_ffmpeg_command(
         audio_paths=["/tmp/a0.audio", "/tmp/a1.audio"],
         background_image_path="/tmp/bg.image",
@@ -89,8 +90,9 @@ def test_build_command_filter_uses_acrossfade_and_showwaves() -> None:
     assert "overlay=" in fc
 
 
+@pytest.mark.fr("FR-002")
 def test_build_command_acrossfade_count_is_track_count_minus_one() -> None:
-    """N 本連結なら acrossfade は N-1 回現れる (6 本 → 5 回)。"""
+    """FR-002: N 本連結なら acrossfade は N-1 回現れる (6 本 → 5 回)。"""
     audio = [f"/tmp/a{i}.audio" for i in range(6)]
     fc = _filter_complex_of(
         build_ffmpeg_command(

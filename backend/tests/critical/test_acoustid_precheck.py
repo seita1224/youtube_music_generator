@@ -370,9 +370,10 @@ async def test_check_track_reads_audio_via_storage() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-010")
 @respx.mock
 async def test_check_post_tracks_all_clear() -> None:
-    """全 track clear なら hit_positions 空・連続カウントは 0 にリセット。"""
+    """FR-010: 全 track clear なら hit_positions 空・連続カウントは 0 にリセット。"""
     respx.post(ACOUSTID_LOOKUP_URL).mock(
         return_value=httpx.Response(200, json=_lookup_no_results())
     )
@@ -440,9 +441,10 @@ async def test_check_post_tracks_partial_hit() -> None:
     assert notifier.sent == []
 
 
+@pytest.mark.fr("FR-012")
 @respx.mock
 async def test_check_post_tracks_third_consecutive_hit_suspends_genre() -> None:
-    """連続 3 回 hit でジャンルを停止 (FR-012)。Genre.enabled=False + audit + Slack。"""
+    """FR-012: 連続 3 回 hit でジャンルを停止。Genre.enabled=False + audit + Slack。"""
     respx.post(ACOUSTID_LOOKUP_URL).mock(
         return_value=httpx.Response(200, json=_lookup_ok(score=0.99))
     )

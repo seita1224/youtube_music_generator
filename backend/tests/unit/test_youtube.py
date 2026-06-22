@@ -251,8 +251,9 @@ def _memory_storage() -> StorageAdapter:
 # --------------------------------------------------------------------------- #
 # YouTubeUploader
 # --------------------------------------------------------------------------- #
+@pytest.mark.fr("FR-006")
 async def test_upload_sets_synthetic_media_flag_and_updates_post() -> None:
-    """body に containsSyntheticMedia=true を付与し、 投稿後 Post を更新する。"""
+    """FR-006: body に containsSyntheticMedia=true を付与し、 投稿後 Post を更新する。"""
     settings = _settings()
     recorder: dict[str, Any] = {}
     uploader = YouTubeUploader(
@@ -365,8 +366,9 @@ async def test_compliance_gate_passes_when_flag_present() -> None:
     assert notifier.calls == []
 
 
+@pytest.mark.fr("FR-007")
 async def test_compliance_gate_raises_when_flag_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """フラグ欠落 body が来たら ComplianceError + ERROR 通知。"""
+    """FR-007: フラグ欠落 body が来たら ComplianceError + ERROR 通知。"""
     import importlib
 
     # パッケージ __init__ が関数を再 export しているため、 真のモジュールを取得する。
@@ -390,9 +392,9 @@ async def test_compliance_gate_raises_when_flag_missing(monkeypatch: pytest.Monk
             video_uri=str(post.video_uri),
             notifier=notifier,
         )
-    # 違反通知が ERROR レベルで 1 件飛ぶ。
+    # 違反通知が 1 件飛ぶ (FR-114: カテゴリ名 prefix [COMPLIANCE])。
     assert len(notifier.calls) == 1
-    assert "[ERROR]" in notifier.calls[0]["message"]
+    assert "[COMPLIANCE]" in notifier.calls[0]["message"]
 
 
 def test_build_upload_status_body_default_has_flag() -> None:

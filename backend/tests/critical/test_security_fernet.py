@@ -50,6 +50,7 @@ def cipher(fernet_key: str) -> TokenCipher:
 # --- ラウンドトリップ -------------------------------------------------------------
 
 
+@pytest.mark.fr("FR-083")
 @pytest.mark.parametrize(
     "plaintext",
     [
@@ -61,7 +62,7 @@ def cipher(fernet_key: str) -> TokenCipher:
     ],
 )
 def test_encrypt_decrypt_roundtrip(cipher: TokenCipher, plaintext: str) -> None:
-    """暗号化 → 復号で元の平文に戻る。"""
+    """FR-083: 暗号化 → 復号で元の平文に戻る。"""
     ciphertext = cipher.encrypt(plaintext)
 
     assert isinstance(ciphertext, bytes)

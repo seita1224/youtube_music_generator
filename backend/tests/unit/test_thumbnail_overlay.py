@@ -80,7 +80,9 @@ _BASE_URI = "file:///srv/ymg/outputs/image/post-1/base.png"
 _OUT_URI = "file:///srv/ymg/outputs/thumbnail/post-1/thumb.jpg"
 
 
+@pytest.mark.fr("FR-054")
 def test_compose_returns_resolved_uri_and_writes_jpeg() -> None:
+    """FR-054: 解決 URI を返し、1280x720 の有効な JPEG を書き出す。"""
     storage = _FakeStorage({_BASE_URI: _png_bytes()})
     result = compose_thumbnail(
         base_image_uri=_BASE_URI,
@@ -154,8 +156,9 @@ def test_corrupt_base_image_raises_quality_error() -> None:
     assert excinfo.value.category is ErrorCategory.QUALITY
 
 
+@pytest.mark.fr("FR-055")
 def test_unbundled_font_falls_back_without_error() -> None:
-    """フォント未配置 (実環境はバイナリ未同梱) でも例外を出さず合成できる。"""
+    """FR-055: フォント未配置 (実環境はバイナリ未同梱) でも例外を出さず合成できる。"""
     storage = _FakeStorage({_BASE_URI: _png_bytes()})
     # font_primary に未知名を渡し、 候補ファイルが無い経路を踏ませる。
     template = GenreTemplate(

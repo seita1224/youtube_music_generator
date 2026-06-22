@@ -107,8 +107,9 @@ def _register_success_mock(router: respx.MockRouter) -> dict[str, str]:
     return output_by_job
 
 
+@pytest.mark.fr("FR-003")
 async def test_submit_and_wait_creates_six_tracks_and_jobs() -> None:
-    """6 トラック投入 → 全 succeeded で AudioTrack 6 件 + GpuJob 6 件を永続化する。"""
+    """FR-003: 6 トラック投入 → 全 succeeded で AudioTrack 6 件 + GpuJob 6 件を永続化する。"""
     session = _FakeSession()
     storage = StorageAdapter()
     post = _post()
@@ -175,8 +176,9 @@ async def test_submit_and_wait_failed_job_raises_transient() -> None:
     assert jobs[-1].error_message == "ACE-Step OOM"
 
 
+@pytest.mark.fr("FR-087")
 async def test_regenerate_track_resets_acoustid_and_increments_count() -> None:
-    """再生成で audio_uri 差し替え・acoustid_status を not_checked に戻し count を +1 する。"""
+    """FR-087: 再生成で audio_uri 差し替え・acoustid_status を not_checked に戻し count を +1 する。"""
     session = _FakeSession()
     post = _post()
     track = AudioTrack(

@@ -186,7 +186,9 @@ def test_list_genres_filters_by_role(client: TestClient, session: _FakeSession) 
 
 
 # --- POST /genres/{name}/promote -------------------------------------------
+@pytest.mark.fr("FR-038")
 def test_promote_steps_up_one_level_and_enables(client: TestClient, session: _FakeSession) -> None:
+    """FR-038: experimental→extended へ 1 段昇格し enabled=True にする。"""
     session.rows = [_genre("lo-fi", role="experimental", enabled=False)]
     resp = client.post("/genres/lo-fi/promote", json={}, auth=_AUTH)
     assert resp.status_code == 200

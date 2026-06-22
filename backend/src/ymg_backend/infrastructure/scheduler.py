@@ -49,7 +49,7 @@ from ymg_backend.domain.dryrun.retention_job import (
     RETENTION_MINUTE,
     build_retention_runner,
 )
-from ymg_backend.domain.errors.errors import resolve_category
+from ymg_backend.domain.errors.errors import SchedulerHaltError, resolve_category
 from ymg_backend.infrastructure.db.session import get_sessionmaker
 
 if TYPE_CHECKING:
@@ -349,6 +349,12 @@ class SchedulerService:
         try:
             async with sessionmaker() as session:
                 await self._cycle_runner(session=session, target_date=target_date)
+        except SchedulerHaltError as exc:  # FR-113: インフラ級 fatal は scheduler を自動停止
+            log.bind(error_category=exc.category.value).error(
+                "daily-cycle job halted scheduler", slot=slot, error=str(exc)
+            )
+            await self._notify_failure(exc, slot=slot, target_date=target_date)
+            self.disable()
         except Exception as exc:  # 1 回の失敗で scheduler スレッドを落とさない (ADR-0028)
             category = resolve_category(exc)
             log.bind(error_category=category.value).error(
@@ -403,6 +409,12 @@ class SchedulerService:
         log.info("job fired", job_id=job_id, target_date=target_date.isoformat())
         try:
             await runner()
+        except SchedulerHaltError as exc:  # FR-113: インフラ級 fatal は scheduler を自動停止
+            log.bind(error_category=exc.category.value).error(
+                "job halted scheduler", job_id=job_id, error=str(exc)
+            )
+            await self._notify_failure(exc, slot=job_id, target_date=target_date)
+            self.disable()
         except Exception as exc:  # 1 回の失敗で scheduler スレッドを落とさない (ADR-0028)
             category = resolve_category(exc)
             log.bind(error_category=category.value).error(

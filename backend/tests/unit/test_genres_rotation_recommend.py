@@ -83,8 +83,9 @@ def test_evaluate_keep_when_below_min_days() -> None:
     assert out.retention_ratio_to_primary is None
 
 
+@pytest.mark.fr("FR-037")
 def test_evaluate_adopt_at_or_above_080() -> None:
-    """前提を満たし retention 比 >=0.80 で adopt。"""
+    """FR-037: 前提を満たし retention 比 >=0.80 で adopt。"""
     stats = _stats(
         video_count=4,
         avg_retention_pct=40.0,  # 40 / 50 = 0.80

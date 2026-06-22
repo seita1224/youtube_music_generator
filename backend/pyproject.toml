@@ -68,4 +68,6 @@ pythonpath = ["src"]
 markers = [
     "critical: critical path tests (100% coverage required, Constitution II)",
     "integration: 実 DB / 外部依存を伴う統合テスト (接続不可なら skip)",
+    "fr(*ids): この test が満たす機能要件 spec.md の FR ID (例: fr('FR-006','FR-007'))。 仕様↔テスト追跡用。",
+    "unit: 単体テスト (外部依存なし、 mock 境界で完結)。",
 ]

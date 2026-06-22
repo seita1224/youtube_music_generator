@@ -50,10 +50,40 @@ _DEFAULT_DURATION_MIN: Final[int] = 30
 
 # テンプレ YAML の ``template`` フィールド名(ADR-0034 (1))。
 _TEMPLATE_KEY: Final[str] = "template"
-# 生成スロットに渡す既定の文字数上限。 タイトル全体 60 字のうちサブタイトルは <=12 字想定
-# (ADR-0034 (1))だが、 絵文字スロット等も同 I/F を通るため余裕を持たせる。 最終長は
-# 合成後に :data:`MAX_TITLE_CHARS` で再検証するため、 ここは過大生成の抑制が目的。
-_DEFAULT_SLOT_MAX_CHARS: Final[int] = 16
+# 生成スロット(日本語サブタイトル / 絵文字)の文字数上限(FR-051 「<=12 字の日本語サブタイトル」)。
+# 生成ヒントとして finisher に渡し、 合成前に生成テキスト長を本値で**強制検証**する。
+_SUBTITLE_MAX_CHARS: Final[int] = 12
+# タイトルに含められる絵文字数の上限(FR-051 「絵文字 1 個まで」)。
+_MAX_TITLE_EMOJI: Final[int] = 1
+
+
+def _count_emoji_groups(text: str) -> int:
+    """文字列中の絵文字「個数」を数える(FR-051 の絵文字数判定用)。
+
+    各絵文字ベース・コードポイントを 1 個と数えるが、 直前が ZWJ(U+200D)なら前の絵文字に
+    結合しているとみなし加算しない。 これにより ``👨‍👩‍👧``(ZWJ 結合)は 1 個、 隣接した別絵文字
+    ``🎵🎶`` は 2 個と数える。 異体字セレクタ / 肌色修飾子は継続として無視する。
+    music 動画タイトルが使う単純な絵文字(🎵 / 🌙 / 🎧 等)に十分な近似。
+    """
+    count = 0
+    prev_was_zwj = False
+    for ch in text:
+        cp = ord(ch)
+        is_emoji_base = (
+            0x1F000 <= cp <= 0x1FAFF  # 絵文字・絵文字的記号の主要ブロック
+            or 0x2600 <= cp <= 0x27BF  # Misc Symbols + Dingbats(☀ ✂ ✅ 等)
+            or 0x2B00 <= cp <= 0x2BFF  # ⭐ ⬆ 等
+            or 0x1F1E6 <= cp <= 0x1F1FF  # 国旗(regional indicator)
+        )
+        if is_emoji_base:
+            if not prev_was_zwj:
+                count += 1
+            prev_was_zwj = False
+        elif cp == 0x200D:  # ZWJ → 次の絵文字は前に結合
+            prev_was_zwj = True
+        else:  # 異体字セレクタ / 肌色修飾子 / 非絵文字
+            prev_was_zwj = False
+    return count
 
 
 async def render_title(
@@ -105,6 +135,18 @@ async def render_title(
                 "genre": genre,
                 "length": len(title),
                 "max_chars": MAX_TITLE_CHARS,
+                "title": title,
+            },
+        )
+
+    emoji_count = _count_emoji_groups(title)
+    if emoji_count > _MAX_TITLE_EMOJI:
+        raise QualityError(
+            f"rendered title contains {emoji_count} emoji (max {_MAX_TITLE_EMOJI})",
+            context={
+                "genre": genre,
+                "emoji_count": emoji_count,
+                "max_emoji": _MAX_TITLE_EMOJI,
                 "title": title,
             },
         )
@@ -161,8 +203,22 @@ async def _render_generative_slots(
         req = FinisherRequest(
             instruction=slot.instruction,
             context=base_context,
-            max_chars=_DEFAULT_SLOT_MAX_CHARS,
+            max_chars=_SUBTITLE_MAX_CHARS,
         )
         resp = await finisher.render(req)
-        generated[slot.slot_id] = resp.text.strip()
+        text = resp.text.strip()
+        # FR-051: 生成スロット(サブタイトル)は 12 字以内に強制する。 超過は quality 失敗とし、
+        # オーケストレータが当該部分のみスキップ + デフォルトで続行できるようにする(ADR-0028)。
+        if len(text) > _SUBTITLE_MAX_CHARS:
+            raise QualityError(
+                f"generated slot exceeds {_SUBTITLE_MAX_CHARS} chars: {len(text)}",
+                context={
+                    "genre": genre,
+                    "slot_id": slot.slot_id,
+                    "length": len(text),
+                    "max_chars": _SUBTITLE_MAX_CHARS,
+                    "text": text,
+                },
+            )
+        generated[slot.slot_id] = text
     return generated
