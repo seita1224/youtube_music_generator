@@ -49,8 +49,8 @@
 | FR-034 | genre_distribution 合計 1.0±0.01 | unit/test_weekly_planner.py(成立 + 負経路を新規追加) | unit |
 | FR-035 | 入力 metrics を snapshot 保存 | integration/test_weekly_cycle.py::test_weekly_cycle_generates_plan_and_applies_rotation | integration |
 | FR-036 | prompt をバージョン管理・記録 | unit/test_plans_planner.py::test_generate_injects_allowed_genres_into_user_prompt | unit |
-| FR-037 | experiment ジャンル採用/削除判定 | unit/test_genres_rotation_recommend.py::test_evaluate_adopt_at_or_above_080 | unit |
-| FR-038 | role 遷移を UI 承認+audit | unit/test_genres_api.py::test_promote_steps_up_one_level_and_enables | unit |
+| FR-037 | experiment ジャンル採用/削除判定 | unit/test_genres_rotation_recommend.py::test_evaluate_adopt_at_or_above_080 + e2e/genres.spec.ts | unit/e2e |
+| FR-038 | role 遷移を UI 承認+audit | unit/test_genres_api.py::test_promote_steps_up_one_level_and_enables + e2e/genres.spec.ts(promote/disable 承認導線) | unit/e2e |
 
 ## Directive parser / 仕上げ LLM / テンプレ・レンダ
 
@@ -125,6 +125,7 @@ backend マーカーに加え、 frontend テスト名に `[FR-xxx]` を付与:
 - `[FR-073/FR-102]` e2e/scheduler.spec.ts(scheduler ON/OFF・panic-stop UI)
 - `[FR-020/FR-022]` e2e/llm.spec.ts(provider 切替・不正組合せ)
 - `[FR-061/FR-063]` e2e/dryrun_review.spec.ts(承認/却下・却下理由)
+- `[FR-037/FR-038]` e2e/genres.spec.ts(ジャンル管理: 昇格=採用 / 無効化=削除 の承認導線、 画面10)
 
 ## 仕様↔実装の乖離(調査で発見 → ユーザー判断のうえ解決済み)
 
