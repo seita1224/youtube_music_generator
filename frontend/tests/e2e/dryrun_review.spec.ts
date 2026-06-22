@@ -119,8 +119,13 @@ async function mockDryrunApi(
       output.state = "rejected";
       output.reject_reason = payload?.reason;
       output.reviewed_at = "2026-06-15T01:00:00Z";
-      // reject は 204/empty 想定 (lib/api: Promise<void>)。
-      await route.fulfill({ status: 204, body: "" });
+      // backend reject は 200 + 更新後 DryrunOutput を返す (api/dryrun.py:210
+      // DryrunOutputResponse / contract responses 200)。 approve と同形。
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(output),
+      });
       return;
     }
 
@@ -151,7 +156,7 @@ async function mockDryrunApi(
   });
 }
 
-test.describe("dryrun レビュー画面 (US2)", () => {
+test.describe("[FR-061/FR-063] dryrun レビュー画面 (US2)", () => {
   // LAN 内 Basic 認証セッションを付与 (ADR-0013)。 同一オリジン proxied パスの
   // <video> もこのセッションを再利用する。
   test.use({

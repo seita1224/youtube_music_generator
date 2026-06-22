@@ -26,7 +26,13 @@ async function parse<T>(response: Response): Promise<T> {
       detail || `${response.status} ${response.statusText}`,
     );
   }
-  return (await response.json()) as T;
+  // 204 No Content / 空ボディ(apiPost<void>・apiPut<void> の reject 等)は undefined を返す。
+  // response.json() は空ボディで例外を投げるため、 一旦 text を読んで判定する。
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  return (text === "" ? undefined : JSON.parse(text)) as T;
 }
 
 /** GET。 response ボディを型 T として返す。 */
