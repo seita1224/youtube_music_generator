@@ -6,8 +6,8 @@
 
 import { apiGet, apiPost } from "@/lib/api/client";
 
-// Genre.role は enum ではなく文字列運用(primary / extended / experimental)。
-export type GenreRole = "primary" | "extended" | "experimental";
+// Genre.role は enum ではなく文字列運用(experiment / extension / main、 spec FR-037/038)。
+export type GenreRole = "main" | "extension" | "experiment";
 
 /** ジャンル辞書の 1 レコード(GET /genres の items 要素、 promote/disable の応答)。 */
 export interface Genre {
@@ -45,16 +45,46 @@ export async function listGenres(filters?: {
   return apiGet<GenreListResponse>(`/genres${q ? `?${q}` : ""}`);
 }
 
+/** POST /genres の body(手動でジャンルを新規作成する)。 */
+export interface CreateGenreInput {
+  readonly name: string;
+  readonly display_name: string;
+  readonly role?: GenreRole; // 既定 experiment(backend 側)
+  readonly bpm_min?: number | null;
+  readonly bpm_max?: number | null;
+  readonly description?: string;
+  readonly enabled?: boolean;
+}
+
+/** ジャンルを手動で新規作成する(FR-038)。 既定 role=experiment。 name 重複は 409。 */
+export async function createGenre(input: CreateGenreInput): Promise<Genre> {
+  return apiPost<Genre>("/genres", input);
+}
+
 /**
  * ジャンルを採用方向へ昇格する(FR-038)。 enabled=true + role を 1 段昇格
- * (experimental → extended → primary)。 target_role 明示も可。
- * primary を更に昇格する等の不正遷移は backend が 409 を返し ApiError になる。
+ * (experiment → extension → main)。 target_role 明示も可。
+ * main を更に昇格する等の不正遷移は backend が 409 を返し ApiError になる。
  */
 export async function promoteGenre(
   name: string,
   options?: { readonly targetRole?: GenreRole; readonly reason?: string },
 ): Promise<Genre> {
   return apiPost<Genre>(`/genres/${encodeURIComponent(name)}/promote`, {
+    target_role: options?.targetRole,
+    reason: options?.reason,
+  });
+}
+
+/**
+ * ジャンルを採用方向と逆へ 1 段降格する(FR-038)。 main → extension → experiment。
+ * enabled は変更しない(停止は disable)。 experiment を更に降格等は 409。
+ */
+export async function demoteGenre(
+  name: string,
+  options?: { readonly targetRole?: GenreRole; readonly reason?: string },
+): Promise<Genre> {
+  return apiPost<Genre>(`/genres/${encodeURIComponent(name)}/demote`, {
     target_role: options?.targetRole,
     reason: options?.reason,
   });

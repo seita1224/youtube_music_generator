@@ -603,7 +603,7 @@ paths:
             type: boolean
         - in: query
           name: role
-          description: role 文字列でフィルタ (primary / extended / experimental)
+          description: role 文字列でフィルタ (experiment / extension / main)
           schema:
             type: string
       responses:
@@ -621,13 +621,62 @@ paths:
                       $ref: "#/components/schemas/Genre"
                   total:
                     type: integer
+    post:
+      summary: ジャンルを手動で新規作成する (US3, FR-038)
+      description: >-
+        ジャンル辞書に新規ジャンルを追加する。 既定 role は experiment
+        (experiment_slot 同様、 新ジャンルは実験から始める)。 name 重複は 409。
+        audit_log に action="genre_created" を残す。
+      operationId: createGenre
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, display_name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                display_name:
+                  type: string
+                  minLength: 1
+                role:
+                  type: string
+                  enum: [experiment, extension, main]
+                  default: experiment
+                bpm_min:
+                  type: integer
+                  nullable: true
+                bpm_max:
+                  type: integer
+                  nullable: true
+                description:
+                  type: string
+                enabled:
+                  type: boolean
+                  default: true
+      responses:
+        "201":
+          description: Created (新規 Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "409":
+          description: "name 重複 (既に存在するジャンル)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /genres/{name}/promote:
     post:
       summary: ジャンルを採用方向へ昇格する (enabled=true + role 遷移; US3 T107)
       description: >-
         実験/無効ジャンルを主力寄りへ昇格する role 遷移。 enabled=true にし、
-        role を experimental→extended→primary の方向へ進める (target_role 明示も可)。
+        role を experiment→extension→main の方向へ進める (target_role 明示も可)。
         audit_log に action="genre_promoted" を残す。
       operationId: promoteGenre
       parameters:
@@ -642,7 +691,7 @@ paths:
                 target_role:
                   description: 明示する遷移先 role (省略時は 1 段昇格)
                   type: string
-                  enum: [extended, primary]
+                  enum: [extension, main]
                 reason:
                   description: 昇格理由 (audit payload へ記録)
                   type: string
@@ -660,7 +709,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: "不正な role 遷移 (例: primary をさらに promote)"
+          description: "不正な role 遷移 (例: main をさらに promote)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /genres/{name}/demote:
+    post:
+      summary: ジャンルを 1 段降格する (role step down; US3, FR-038)
+      description: >-
+        role を main→extension→experiment の方向へ 1 段下げる (target_role 明示も可)。
+        enabled は変更しない (停止は disable)。 experiment をさらに降格は 409。
+        audit_log に action="genre_demoted" を残す。
+      operationId: demoteGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_role:
+                  description: 明示する遷移先 role (省略時は 1 段降格)
+                  type: string
+                  enum: [extension, experiment]
+                reason:
+                  description: 降格理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "不正な role 遷移 (例: experiment をさらに demote)"
           content:
             application/json:
               schema:
@@ -670,9 +763,9 @@ paths:
     post:
       summary: ジャンルを無効化する (enabled=false; US3 T107)
       description: >-
-        avoid / 削除推奨ジャンルを無効化する。 enabled=false にし role を
-        experimental へ戻す (任意)。 daily_cycle._load_enabled_genres が
-        次回以降このジャンルを拾わなくなる。 audit_log に action="genre_disabled" を残す。
+        avoid / 削除推奨ジャンルを無効化する。 enabled=false にする (role は保持)。
+        daily_cycle._load_enabled_genres が次回以降このジャンルを拾わなくなる。
+        audit_log に action="genre_disabled" を残す。
       operationId: disableGenre
       parameters:
         - $ref: "#/components/parameters/GenreNamePath"
