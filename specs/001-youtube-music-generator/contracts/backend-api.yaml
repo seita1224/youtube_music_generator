@@ -41,7 +41,7 @@ paths:
           name: status
           schema:
             type: string
-            enum: [generated, approved, executing, completed, failed]
+            enum: [generated, approved, executing, music_generated, completed, failed]
         - in: query
           name: limit
           schema:
@@ -126,10 +126,16 @@ paths:
       operationId: listPosts
       parameters:
         - in: query
+          name: plan_id
+          description: 指定 Plan に属する Post のみ返す (Plan 詳細の音声一覧用)
+          schema:
+            type: string
+            format: uuid
+        - in: query
           name: status
           schema:
             type: string
-            enum: [pending, generating, generated, posting, posted, failed]
+            enum: [pending, generating, music_generated, generated, posting, posted, failed]
         - in: query
           name: genre
           schema:
@@ -179,6 +185,77 @@ paths:
       responses:
         "202":
           description: Retry queued
+
+  /posts/{post_id}/tracks:
+    get:
+      summary: List audio tracks for a post (6 tracks when music_generated)
+      operationId: listPostTracks
+      description: |
+        AudioTrack メタを返す。 `audio_uri` は露出せず、再生/DL は別エンドポイントを使う。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                additionalProperties: false
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AudioTrack"
+        "404":
+          description: Post が存在しない
+
+  /posts/{post_id}/tracks/{position}/audio:
+    get:
+      summary: Stream track WAV for in-browser playback
+      operationId: streamPostTrackAudio
+      description: >-
+        StorageAdapter 経由で WAV を StreamingResponse で返す。
+        `audio_uri` はレスポンスに含めない。 Basic 認証必須(dryrun 動画配信と同方式)。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+        - $ref: "#/components/parameters/TrackPositionPath"
+      responses:
+        "200":
+          description: WAV バイトストリーム
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Post / track / オブジェクトが存在しない
+
+  /posts/{post_id}/tracks/{position}/download:
+    get:
+      summary: Download track WAV (Content-Disposition attachment)
+      operationId: downloadPostTrackAudio
+      description: >-
+        再生用と同じバイト源を attachment で返す。 Basic 認証必須。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+        - $ref: "#/components/parameters/TrackPositionPath"
+      responses:
+        "200":
+          description: WAV ダウンロード
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="track-0.wav"'
+        "404":
+          description: Post / track / オブジェクトが存在しない
 
   /dryrun/outputs:
     get:
@@ -337,6 +414,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/SchedulerState"
 
+  /scheduler/run-now:
+    post:
+      summary: Start music generation for an approved Daily Plan (ADR-0006, ADR-0011)
+      operationId: runSchedulerNow
+      description: |
+        承認済み Daily Plan の音楽専用実行を即時 1 回起動する。
+        実行予約時に `job_history(status=running)` を commit し、その id を `run_id` として返す。
+        長時間処理のためバックグラウンド実行し 202 を返す。
+        定時(cron)と同一の single-flight 制約を共有する。
+        `target_date` だけで新規 Plan を自動生成する挙動は廃止。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              additionalProperties: false
+              properties:
+                plan_id:
+                  type: string
+                  format: uuid
+                  description: status=approved の Daily Plan id
+      responses:
+        "202":
+          description: Accepted; music generation runs in background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunNowResponse"
+        "404":
+          description: plan_id が存在しない
+        "409":
+          description: |
+            Plan が approved 以外、または別の music_generation が running
+            (single-flight)。メッセージ例: 「別の音楽生成が実行中」
+        "503":
+          description: music runner / composition root 未配線
+
   /scheduler/panic-stop:
     post:
       summary: Emergency stop (ADR-0031). Disables scheduler + lists recent posts for private-flip.
@@ -442,19 +558,21 @@ paths:
 
   /llm/providers:
     get:
+      summary: LLM settings (active provider + credential metadata)
       operationId: listLlmProviders
+      description: >-
+        active provider/auth_mode/model と、各 provider の選択肢および credential
+        メタデータ (source/configured) を返す。 API key 平文・マスク・末尾は含めない。
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/LlmProviderConfig"
+                $ref: "#/components/schemas/LlmSettingsResponse"
 
     put:
-      summary: Change active LLM provider (ADR-0019)
+      summary: Change active LLM provider/model (ADR-0019)
       operationId: setActiveLlmProvider
       requestBody:
         required: true
@@ -462,7 +580,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [provider, auth_mode]
+              required: [provider, auth_mode, model]
               properties:
                 provider:
                   type: string
@@ -470,11 +588,81 @@ paths:
                 auth_mode:
                   type: string
                   enum: [api_key, codex_oauth]
+                model:
+                  type: string
+                  description: provider の supported_models に含まれるモデル ID
       responses:
         "200":
           description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmProviderState"
         "400":
-          description: Invalid combination (Anthropic + subscription is forbidden)
+          description: Invalid combination (Anthropic + non-api_key)
+        "422":
+          description: Unsupported auth_mode (codex_oauth) or invalid model
+
+  /llm/credentials:
+    put:
+      summary: Set/replace encrypted LLM API key (write-only)
+      operationId: putLlmCredential
+      description: >-
+        OpenAI/Anthropic の API key を Fernet 暗号化して llm_provider_secrets に保存する。
+        応答に平文・マスクは含めない。 環境変数が非空のときは 409 (env が SoT)。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, api_key]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic]
+                api_key:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: >-
+                    Provider API key (write-only). Leading/trailing whitespace is
+                    stripped server-side before encryption. Whitespace-only is
+                    rejected. Max 2048 characters (input DoS bound).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmCredentialState"
+        "409":
+          description: Environment variable is source of truth
+        "422":
+          description: Empty, whitespace-only, or too-long api_key
+
+  /llm/credentials/{provider}:
+    delete:
+      summary: Delete DB-stored LLM API key
+      operationId: deleteLlmCredential
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [openai, anthropic]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmCredentialState"
+        "409":
+          description: Environment variable is source of truth
+        "404":
+          description: No DB-stored credential for this provider
 
   /prompts:
     get:
@@ -553,10 +741,80 @@ paths:
               schema:
                 $ref: "#/components/schemas/MvpCheck"
 
+  /jobs/runs:
+    get:
+      summary: List recent job runs (job_history snapshot, ADR-0023)
+      operationId: listJobRuns
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: job_name
+          schema:
+            type: string
+            example: music_generation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                additionalProperties: false
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JobRun"
+
+  /jobs/runs/{run_id}/events:
+    get:
+      summary: Persisted step events for a run (job_step_events, ADR-0023)
+      operationId: listJobRunEvents
+      parameters:
+        - $ref: "#/components/parameters/RunIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, items]
+                additionalProperties: false
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JobStepEvent"
+        "404":
+          description: run_id が存在しない
+
   /jobs/stream:
     get:
-      summary: SSE for live job progress (ADR-0023)
+      summary: SSE for live job progress of a selected run (ADR-0023)
       operationId: streamJobs
+      description: |
+        選択した `run_id` のライブ差分を text/event-stream で配信する。
+        初期表示は `GET /jobs/runs/{run_id}/events` の DB snapshot、以後本 SSE。
+        イベント本体は JobEvent(JSON)。正本は job_step_events。
+      parameters:
+        - in: query
+          name: run_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: job_history.id
       responses:
         "200":
           description: text/event-stream
@@ -565,6 +823,8 @@ paths:
               schema:
                 type: string
                 description: JSON-Lines events of JobEvent
+        "404":
+          description: run_id が存在しない
 
   /youtube/videos/{video_id}/privacy:
     put:
@@ -839,6 +1099,23 @@ components:
       schema:
         type: string
         format: uuid
+    TrackPositionPath:
+      in: path
+      name: position
+      required: true
+      description: AudioTrack.position (0..5)
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 5
+    RunIdPath:
+      in: path
+      name: run_id
+      required: true
+      description: job_history.id (API run_id)
+      schema:
+        type: string
+        format: uuid
     GenreNamePath:
       in: path
       name: name
@@ -891,7 +1168,7 @@ components:
           type: string
         status:
           type: string
-          enum: [generated, approved, executing, completed, failed]
+          enum: [generated, approved, executing, music_generated, completed, failed]
         llm_provider:
           type: string
         llm_model:
@@ -925,7 +1202,7 @@ components:
           type: object
         status:
           type: string
-          enum: [pending, generating, generated, posting, posted, failed]
+          enum: [pending, generating, music_generated, generated, posting, posted, failed]
         final_title:
           type: string
         final_description:
@@ -993,6 +1270,144 @@ components:
         enabled:
           type: boolean
         updated_at:
+          type: string
+          format: date-time
+
+    RunNowResponse:
+      type: object
+      required: [accepted, run_id, plan_id, target_date]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
+        run_id:
+          type: string
+          format: uuid
+          description: job_history.id
+        plan_id:
+          type: string
+          format: uuid
+        target_date:
+          type: string
+          format: date
+
+    JobRun:
+      type: object
+      required: [run_id, job_name, status, started_at]
+      additionalProperties: false
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        job_name:
+          type: string
+          example: music_generation
+        status:
+          type: string
+          enum: [running, succeeded, failed, skipped]
+        trigger:
+          type: string
+          enum: [cron, run_now]
+          nullable: true
+        target_date:
+          type: string
+          format: date
+          nullable: true
+        plan_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: context_type=plan のときの context_id
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+
+    JobStepEvent:
+      type: object
+      required: [id, run_id, step, status, created_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        step:
+          type: string
+          description: cycle / post / music 等
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        genre:
+          type: string
+          nullable: true
+        context_type:
+          type: string
+          nullable: true
+        context_id:
+          type: string
+          format: uuid
+          nullable: true
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AudioTrack:
+      type: object
+      required: [id, post_id, position, duration_sec, acoustid_status, generated_at]
+      additionalProperties: false
+      description: |
+        メタのみ。 audio_uri は露出せず、再生は /audio・DL は /download。
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          minimum: 0
+          maximum: 5
+        duration_sec:
+          type: integer
+        bpm:
+          type: integer
+          nullable: true
+        music_key:
+          type: string
+          nullable: true
+        subtheme:
+          type: string
+          nullable: true
+        acoustid_status:
+          type: string
+          enum: [not_checked, clear, hit, api_error]
+        regenerated_count:
+          type: integer
+        generated_at:
           type: string
           format: date-time
 
@@ -1180,13 +1595,22 @@ components:
 
     LlmProviderConfig:
       type: object
-      required: [provider, available, auth_modes]
+      required:
+        [
+          provider,
+          available,
+          auth_modes,
+          models,
+          credential_source,
+          credential_configured,
+        ]
       properties:
         provider:
           type: string
           enum: [openai, anthropic, ollama]
         available:
           type: boolean
+          description: credential_configured と同義 (ollama は常に true)
         auth_modes:
           type: array
           items:
@@ -1196,6 +1620,68 @@ components:
           type: array
           items:
             type: string
+        credential_source:
+          type: string
+          enum: [env, db, none, n/a]
+          description: ollama は n/a。 cloud は env 非空 > db > none
+        credential_configured:
+          type: boolean
+        unsupported_auth_modes:
+          type: array
+          items:
+            type: string
+            enum: [api_key, codex_oauth]
+          description: UI で無効表示する認証方式 (Codex OAuth 等)
+
+    LlmActiveState:
+      type: object
+      required: [provider, auth_mode, model]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        auth_mode:
+          type: string
+          enum: [api_key, codex_oauth]
+        model:
+          type: string
+
+    LlmSettingsResponse:
+      type: object
+      required: [active, providers]
+      properties:
+        active:
+          $ref: "#/components/schemas/LlmActiveState"
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/LlmProviderConfig"
+
+    LlmProviderState:
+      type: object
+      required: [provider, auth_mode, model]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        auth_mode:
+          type: string
+          enum: [api_key, codex_oauth]
+        model:
+          type: string
+
+    LlmCredentialState:
+      type: object
+      required: [provider, credential_source, credential_configured]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic]
+        credential_source:
+          type: string
+          enum: [env, db, none, n/a]
+        credential_configured:
+          type: boolean
 
     PromptVersion:
       type: object
@@ -1280,6 +1766,10 @@ components:
         timestamp:
           type: string
           format: date-time
+        run_id:
+          type: string
+          format: uuid
+          description: job_history.id
         job_name:
           type: string
         context_type:
@@ -1292,6 +1782,8 @@ components:
         status:
           type: string
           enum: [running, succeeded, failed]
+        genre:
+          type: string
         error_category:
           type: string
           enum: [transient, recoverable, fatal, compliance, quality]

@@ -83,4 +83,21 @@ describe("useAuthedBlobUrl", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(result.current).toBeNull();
   });
+
+  it("createObjectURL 直後に cancel されたら即 revoke する", async () => {
+    authFetchMock.mockResolvedValue(blobResponse());
+
+    let unmountHook: (() => void) | undefined;
+    createObjectURLMock.mockImplementation(() => {
+      // create の同期中に cleanup が走ると objectUrl 代入前に cancelled になる。
+      unmountHook?.();
+      return "blob:mock-url";
+    });
+
+    const { unmount } = renderHook(() => useAuthedBlobUrl("/race"));
+    unmountHook = unmount;
+
+    await waitFor(() => expect(createObjectURLMock).toHaveBeenCalledTimes(1));
+    expect(revokeObjectURLMock).toHaveBeenCalledWith("blob:mock-url");
+  });
 });

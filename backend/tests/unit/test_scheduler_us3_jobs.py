@@ -70,7 +70,7 @@ class _RecordingRunner:
     def __init__(self) -> None:
         self.calls: list[date] = []
 
-    async def __call__(self, *, session: Any, target_date: date) -> None:
+    async def __call__(self, *, target_date: date) -> None:
         self.calls.append(target_date)
 
 

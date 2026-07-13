@@ -66,13 +66,18 @@ function frame(event: Partial<JobEvent>): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
+const RUN_ID = "11111111-1111-1111-1111-111111111111";
+
 const SAMPLE: JobEvent = {
   timestamp: "2026-06-22T10:00:00+09:00",
-  job_name: "daily_cycle",
+  run_id: RUN_ID,
+  job_name: "music_generation",
   step: "music",
   status: "succeeded",
   genre: "lo-fi hip hop",
 };
+
+const SUBSCRIBE_OPTS = { runId: RUN_ID } as const;
 
 beforeEach(() => {
   authFetchMock.mockReset();
@@ -84,6 +89,23 @@ afterEach(() => {
 });
 
 describe("subscribeJobs: フレーム解析", () => {
+  it("run_id クエリ付きで /jobs/stream を購読する", async () => {
+    authFetchMock.mockImplementation(async (_path, init) => {
+      const signal = (init as RequestInit | undefined)?.signal;
+      if (authFetchMock.mock.calls.length === 1) {
+        return fakeResponse(streamOf([frame(SAMPLE)]));
+      }
+      return fakeResponse(hangingStreamFor(signal));
+    });
+
+    const stop = subscribeJobs(() => {}, SUBSCRIBE_OPTS);
+    await vi.waitFor(() => expect(authFetchMock).toHaveBeenCalled());
+    stop();
+
+    const [path] = authFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe(`/jobs/stream?run_id=${encodeURIComponent(RUN_ID)}`);
+  });
+
   it("2 フレームを解析し onEvent へ渡し、 onStatus は connecting→open", async () => {
     // 1 接続目は 2 イベントの有限ストリーム。 2 接続目以降は abort 可能な無限ストリーム
     //(EOF 後の再接続でテストが先へ進まないようにする)。
@@ -100,6 +122,7 @@ describe("subscribeJobs: フレーム解析", () => {
     const events: JobEvent[] = [];
     const statuses: string[] = [];
     const stop = subscribeJobs((e) => events.push(e), {
+      ...SUBSCRIBE_OPTS,
       onStatus: (s) => statuses.push(s),
     });
 
@@ -126,7 +149,7 @@ describe("subscribeJobs: フレーム解析", () => {
     });
 
     const events: JobEvent[] = [];
-    const stop = subscribeJobs((e) => events.push(e));
+    const stop = subscribeJobs((e) => events.push(e), SUBSCRIBE_OPTS);
     await vi.waitFor(() => expect(events).toHaveLength(1));
     stop();
     expect(events[0]).toMatchObject({ step: "music", genre: "lo-fi hip hop" });
@@ -148,7 +171,7 @@ describe("subscribeJobs: フレーム解析", () => {
     });
 
     const events: JobEvent[] = [];
-    const stop = subscribeJobs((e) => events.push(e));
+    const stop = subscribeJobs((e) => events.push(e), SUBSCRIBE_OPTS);
     await vi.waitFor(() => expect(events).toHaveLength(1));
     stop();
     expect(events[0]).toMatchObject({ step: "music", status: "succeeded" });
@@ -166,7 +189,7 @@ describe("subscribeJobs: フレーム解析", () => {
     });
 
     const events: JobEvent[] = [];
-    const stop = subscribeJobs((e) => events.push(e));
+    const stop = subscribeJobs((e) => events.push(e), SUBSCRIBE_OPTS);
     await vi.waitFor(() => expect(events).toHaveLength(1));
     stop();
     expect(events[0]).toMatchObject({ step: "image", status: "running" });
@@ -190,6 +213,7 @@ describe("subscribeJobs: 再接続", () => {
     const events: JobEvent[] = [];
     const statuses: string[] = [];
     const stop = subscribeJobs((e) => events.push(e), {
+      ...SUBSCRIBE_OPTS,
       onStatus: (s) => statuses.push(s),
     });
 
@@ -224,6 +248,7 @@ describe("subscribeJobs: 停止", () => {
     const statuses: string[] = [];
     const events: JobEvent[] = [];
     const stop = subscribeJobs((e) => events.push(e), {
+      ...SUBSCRIBE_OPTS,
       onStatus: (s) => statuses.push(s),
     });
 
@@ -242,7 +267,7 @@ describe("subscribeJobs: 停止", () => {
     });
 
     const statuses: string[] = [];
-    const stop = subscribeJobs(() => {}, { onStatus: (s) => statuses.push(s) });
+    const stop = subscribeJobs(() => {}, { ...SUBSCRIBE_OPTS, onStatus: (s) => statuses.push(s) });
 
     await vi.waitFor(() => expect(statuses).toContain("open"));
     stop();
@@ -260,6 +285,7 @@ describe("subscribeJobs: 停止", () => {
     const events: JobEvent[] = [];
     const statuses: string[] = [];
     subscribeJobs((e) => events.push(e), {
+      ...SUBSCRIBE_OPTS,
       signal: controller.signal,
       onStatus: (s) => statuses.push(s),
     });

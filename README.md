@@ -19,7 +19,7 @@ backend と疎結合し、 `GPU_WORKER_BASE_URL` を差し替えるだけで Run
 ```text
                 ┌──────────────────────── docker compose ───────────────────────┐
   ブラウザ ──→  │  frontend (Next.js :3000)  ──→  backend (FastAPI :8000)        │
-  (Basic 認証)  │                                   │   │                        │
+  (/login セッション)│  BFF + Basic 注入              │   │                        │
                 │                  PostgreSQL :5432 ─┘   │  APScheduler (in-proc) │
                 │                  (pgvector)            │                        │
                 └────────────────────────────────────────┼───────────────────────┘
@@ -39,13 +39,13 @@ backend と疎結合し、 `GPU_WORKER_BASE_URL` を差し替えるだけで Run
 ## クイックスタート (docker 起動)
 
 ```bash
-cp .env.example .env          # 最低 POSTGRES_PASSWORD / ADMIN_PASSWORD / FERNET_KEY を設定
+cp .env.example .env          # 最低 POSTGRES_PASSWORD / ADMIN_PASSWORD / FERNET_KEY / AUTH_SESSION_SECRET を設定
 make up                       # backend / frontend / postgres を起動
 make migrate                  # alembic upgrade head (事前 pg_dump 込, ADR-0031)
 make healthcheck              # backend / frontend / gpu_worker の /health を確認
 ```
 
-- 管理 UI: `http://localhost:3000` (Basic 認証 = `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
+- 管理 UI: `http://localhost:3000` (`/login` → `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
 - frontend のホスト公開ポートは既定 **3000**。 ポート占有や Docker Desktop の転送 stuck 時は
   `.env` の `FRONTEND_HOST_PORT` を変更 (例 **3001**)。
 - postgres も同様に `POSTGRES_HOST_PORT` で衝突回避できる (既定 5432)。

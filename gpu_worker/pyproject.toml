@@ -2,7 +2,8 @@
 name = "ymg-gpu-worker"
 version = "0.1.0"
 description = "YouTube 音楽投稿自動化システム — GPU worker (ACE-Step + SDXL)"
-requires-python = ">=3.13"
+# ACE-Step (ace-step/ACE-Step) が spacy 経由で CPython 3.12 までしか解決できないため 3.12 を下限にする。
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",

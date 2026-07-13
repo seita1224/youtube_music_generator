@@ -88,7 +88,11 @@ def test_business_routers_are_registered(app: Any) -> None:
     assert "/plans/{plan_id}" in paths
     assert "/posts" in paths
     assert "/posts/{post_id}" in paths
+    assert "/posts/{post_id}/tracks" in paths
+    assert "/posts/{post_id}/tracks/{position}/audio" in paths
+    assert "/posts/{post_id}/tracks/{position}/download" in paths
     assert "/scheduler" in paths
+    assert "/scheduler/run-now" in paths
     # dryrun レビュー業務ルータ (prefix /dryrun) の 4 endpoint が protected 配下に登録済み。
     assert "/dryrun/outputs" in paths
     assert "/dryrun/outputs/{output_id}/approve" in paths
@@ -162,3 +166,30 @@ def test_analytics_route_requires_auth(client: TestClient) -> None:
     resp = client.get("/analytics")
     assert resp.status_code == 401
     assert resp.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+def test_post_track_audio_requires_auth(client: TestClient) -> None:
+    """音声ストリームも protected 親ルータ配下 = 無認証で 401。"""
+    import uuid
+
+    resp = client.get(f"/posts/{uuid.uuid4()}/tracks/0/audio")
+    assert resp.status_code == 401
+    assert resp.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+def test_scheduler_run_now_requires_auth(client: TestClient) -> None:
+    """run-now も protected 親ルータ配下 = 無認証で 401。"""
+    import uuid
+
+    resp = client.post("/scheduler/run-now", json={"plan_id": str(uuid.uuid4())})
+    assert resp.status_code == 401
+    assert resp.headers.get("WWW-Authenticate", "").lower().startswith("basic")
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_openapi_docs_are_not_public(client: TestClient, path: str) -> None:
+    """Swagger / ReDoc / openapi.json は公開しない(404)。"""
+    resp = client.get(path)
+    assert resp.status_code == 404
+    # Basic 無しでもスキーマを返さない(401 ではなく未登録)。
+    assert resp.status_code != 200

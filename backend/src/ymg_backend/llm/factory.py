@@ -1,29 +1,26 @@
 """active な :class:`LlmProvider` を解決する factory (T034)。
 
 env(:class:`~ymg_backend.core.config.Settings`)を基底に、 任意で渡された
-``app_state`` テーブル(``llm_provider`` / ``llm_auth_mode``)で上書きして
-active provider / auth_mode を解決し、 対応する provider 実装を生成する。
+``app_state`` テーブル(``llm_provider`` / ``llm_auth_mode`` / ``llm_model``)で上書きして
+active provider / auth_mode / model を解決し、 対応する provider 実装を生成する。
+
+API key は :mod:`ymg_backend.llm.secrets` の順位 (env 非空 > DB Fernet > none) で解決する。
 
 参照:
 - ADR-0019(provider 実装方針 / 認証方式 / 管理 UI からの再起動なし切替)
 - contracts/llm-provider-interface.md(provider 一覧、 禁止組み合わせ)
-- data-model.md `app_state`(``llm_provider`` / ``llm_auth_mode`` seed)
+- data-model.md `app_state`(``llm_provider`` / ``llm_auth_mode`` / ``llm_model``)
 - spec.md FR-022(Anthropic SDK の subscription 利用を起動時に拒否)
 
 設計方針:
 
 - **app_state は env を上書きする**(ADR-0019「管理 UI からも切替可能、 再起動なし」)。
   ``session`` 未指定なら env のみで解決し、 起動時バリデーションにも使える。
-- ORM model 層(T021)に依存しないよう、 ``app_state`` 参照は SQLAlchemy Core の
-  軽量 Table 定義を本モジュールに閉じて持つ(``llm/pricing.py`` / ``llm/usage_writer.py``
-  と同じ疎結合方針)。
-- **Anthropic + subscription(= api_key 以外)は起動時拒否**(FR-022): factory 時点で
-  :class:`~ymg_backend.llm.base.LlmError`(category="fatal")を送出する。
-  ``AnthropicProvider`` 自身も同じ検証を持つが、 factory で早期に拒否してメッセージを統一する。
-- 秘密値(API key)は ``Settings`` の ``SecretStr`` から生成直前に取り出し、
-  provider 生成後は保持しない(各 provider が漏洩面を最小化する設計)。
-- provider 別の既定モデルは各 provider モジュールの private 定数に依存せず、
-  本モジュールの :data:`_DEFAULT_MODELS` で明示管理する(関心の分離)。
+- ORM model 層に依存しないよう、 ``app_state`` 参照は SQLAlchemy Core の
+  軽量 Table 定義を本モジュールに閉じて持つ。
+- **Anthropic + subscription(= api_key 以外)は起動時拒否**(FR-022)。
+- **Codex OAuth は未配線**: factory は ``codex_oauth`` を fatal で拒否する (ADR-0019 追記)。
+- 秘密値は生成直前に取り出し、 provider 生成後は保持しない。
 """
 
 from __future__ import annotations
@@ -32,12 +29,16 @@ import contextlib
 import json
 from typing import TYPE_CHECKING, Final, cast
 
-from sqlalchemy import Column, MetaData, String, Table, select
+from sqlalchemy import Column, DateTime, MetaData, String, Table, select
 
+from ymg_backend.llm.anthropic_provider import _SUPPORTED_MODELS as _ANTHROPIC_MODELS
 from ymg_backend.llm.anthropic_provider import AnthropicProvider
 from ymg_backend.llm.base import LlmError, LlmProvider, LlmProviderName
+from ymg_backend.llm.ollama_provider import _SUPPORTED_MODELS as _OLLAMA_MODELS
 from ymg_backend.llm.ollama_provider import OllamaProvider
+from ymg_backend.llm.openai_provider import _SUPPORTED_MODELS as _OPENAI_MODELS
 from ymg_backend.llm.openai_provider import OpenAIProvider
+from ymg_backend.llm.secrets import resolve_api_key
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,20 +51,23 @@ _ANTHROPIC_ALLOWED_AUTH_MODE: Final[str] = "api_key"
 # app_state テーブルのキー(data-model.md §app_state seed)。
 _KEY_LLM_PROVIDER: Final[str] = "llm_provider"
 _KEY_LLM_AUTH_MODE: Final[str] = "llm_auth_mode"
+_KEY_LLM_MODEL: Final[str] = "llm_model"
 
 # provider 別の既定モデル(contracts/llm-provider-interface.md / ADR-0019)。
-# 各 provider の supported_models 先頭(推奨既定)に合わせる。
 _DEFAULT_MODELS: Final[dict[LlmProviderName, str]] = {
     "openai": "gpt-4.1",
     "anthropic": "claude-sonnet-4-6",
     "ollama": "qwen2.5:3b",
 }
 
-# 有効な provider 名(境界での入力検証用)。
+_SUPPORTED_MODELS: Final[dict[LlmProviderName, frozenset[str]]] = {
+    "openai": frozenset(_OPENAI_MODELS),
+    "anthropic": frozenset(_ANTHROPIC_MODELS),
+    "ollama": frozenset(_OLLAMA_MODELS),
+}
+
 _VALID_PROVIDERS: Final[frozenset[str]] = frozenset(_DEFAULT_MODELS)
 
-# app_state.value への疎結合参照用 Core Table(ORM 層非依存)。
-# JSONB は実体スキーマに合わせるが、 読み取りは生 JSON 文字列として扱う。
 _metadata: Final[MetaData] = MetaData()
 
 
@@ -76,6 +80,7 @@ def _build_app_state_table() -> Table:
         _metadata,
         Column("key", String, primary_key=True, nullable=False),
         Column("value", _JSONB, nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
     )
 
 
@@ -83,11 +88,7 @@ app_state_table: Final[Table] = _build_app_state_table()
 
 
 class ProviderConfig:
-    """解決済みの active provider 設定(不変)。
-
-    ``provider`` は :data:`_VALID_PROVIDERS` のいずれか、 ``auth_mode`` は env / app_state
-    から得た認証方式(検証前の生値もありうるため ``str``)、 ``model`` は既定モデル ID。
-    """
+    """解決済みの active provider 設定(不変)。"""
 
     __slots__ = ("auth_mode", "model", "provider")
 
@@ -98,11 +99,7 @@ class ProviderConfig:
 
 
 def _coerce_provider(raw: str) -> LlmProviderName:
-    """provider 文字列を検証して :data:`LlmProviderName` に絞り込む。
-
-    Raises:
-        LlmError: 未知の provider 名の場合(category="fatal")。
-    """
+    """provider 文字列を検証して :data:`_VALID_PROVIDERS` に絞り込む。"""
     if raw not in _VALID_PROVIDERS:
         raise LlmError(
             category="fatal",
@@ -113,27 +110,60 @@ def _coerce_provider(raw: str) -> LlmProviderName:
 
 
 def _decode_app_state_value(raw: object) -> str | None:
-    """app_state.value(JSONB)を文字列に正規化する。
-
-    asyncpg は JSONB を Python オブジェクトに既にデコードして返す場合と、
-    生 JSON 文字列で返す場合がある。 文字列に JSON literal が入っていれば
-    一段デコードし、 最終的に ``str`` のみを採用する(それ以外は ``None``)。
-    """
+    """app_state.value(JSONB)を文字列に正規化する。"""
     value: object = raw
     if isinstance(value, str):
-        # 生文字列がそのまま値(例: "openai")のケースは json.loads が失敗するため許容する。
         with contextlib.suppress(ValueError, TypeError):
             value = json.loads(value)
     return value if isinstance(value, str) else None
 
 
-async def _read_app_state_overrides(session: AsyncSession) -> dict[str, str]:
-    """``app_state`` から ``llm_provider`` / ``llm_auth_mode`` の上書き値を読む。
+def resolve_model_for_provider(
+    provider: LlmProviderName,
+    model: str | None,
+    *,
+    strict: bool = True,
+) -> str:
+    """model が provider の supported に含まれるなら採用、 未設定なら既定モデル。
 
-    取得できなかったキーは結果 dict に含めない(= env 値を採用する)。
+    ``strict=True`` (factory 既定) では、 永続化済み model が provider と
+    不整合なら silent fallback せず :class:`LlmError` を送出する。
+    ``strict=False`` は GET active 向けに永続値をそのまま返す。
     """
+    if model is None:
+        return _DEFAULT_MODELS[provider]
+    if model in _SUPPORTED_MODELS[provider]:
+        return model
+    if not strict:
+        return model
+    raise LlmError(
+        category="fatal",
+        message=(
+            f"model='{model}' は provider='{provider}' の対応モデルではありません。"
+            f" 有効値: {sorted(_SUPPORTED_MODELS[provider])}。"
+        ),
+        retryable=False,
+    )
+
+
+def validate_model_for_provider(provider: LlmProviderName, model: str) -> None:
+    """model が provider の supported に無ければ LlmError(fatal)。"""
+    if model not in _SUPPORTED_MODELS[provider]:
+        raise LlmError(
+            category="fatal",
+            message=(
+                f"model='{model}' は provider='{provider}' の対応モデルではありません。"
+                f" 有効値: {sorted(_SUPPORTED_MODELS[provider])}。"
+            ),
+            retryable=False,
+        )
+
+
+async def _read_app_state_overrides(session: AsyncSession) -> dict[str, str]:
+    """``app_state`` から llm_* 上書き値を読む。"""
+    keys = (_KEY_LLM_PROVIDER, _KEY_LLM_AUTH_MODE, _KEY_LLM_MODEL)
     stmt = select(app_state_table.c.key, app_state_table.c.value).where(
-        app_state_table.c.key.in_((_KEY_LLM_PROVIDER, _KEY_LLM_AUTH_MODE))
+        app_state_table.c.key.in_(keys)
     )
     rows = (await session.execute(stmt)).all()
     overrides: dict[str, str] = {}
@@ -148,50 +178,96 @@ async def resolve_provider_config(
     settings: Settings,
     *,
     session: AsyncSession | None = None,
+    strict_model: bool = True,
 ) -> ProviderConfig:
     """env を基底に、 任意で app_state を上書きして active provider 設定を解決する。
 
-    Args:
-        settings: env / ``.env`` から読み込んだ :class:`Settings`。
-        session: ``app_state`` を参照する AsyncSession。 ``None`` なら env のみで解決する
-            (起動時バリデーション用途)。
-
-    Returns:
-        解決済みの :class:`ProviderConfig`(provider / auth_mode / 既定 model)。
-
-    Raises:
-        LlmError: provider 名が未知の場合(category="fatal")。
+    ``strict_model=True`` (factory 既定) では provider/model 不整合を fatal で拒否する。
+    ``strict_model=False`` は GET active 向けに永続 model をそのまま返す。
     """
     provider_raw: str = settings.llm_provider
     auth_mode: str = settings.llm_auth_mode
+    model_raw: str | None = None
 
     if session is not None:
         overrides = await _read_app_state_overrides(session)
         provider_raw = overrides.get(_KEY_LLM_PROVIDER, provider_raw)
         auth_mode = overrides.get(_KEY_LLM_AUTH_MODE, auth_mode)
+        model_raw = overrides.get(_KEY_LLM_MODEL)
 
     provider = _coerce_provider(provider_raw)
+    if auth_mode == "codex_oauth":
+        raise LlmError(
+            category="fatal",
+            message=(
+                "Codex OAuth (auth_mode='codex_oauth') は未実装です。"
+                " API key 認証 (auth_mode='api_key') を使用してください。"
+            ),
+            retryable=False,
+        )
     return ProviderConfig(
         provider=provider,
         auth_mode=auth_mode,
-        model=_DEFAULT_MODELS[provider],
+        model=resolve_model_for_provider(provider, model_raw, strict=strict_model),
     )
 
 
-def _build_openai(settings: Settings, config: ProviderConfig) -> OpenAIProvider:
-    """``OpenAIProvider`` を生成する(api_key / codex_oauth 共通の API key ルート)。"""
-    return OpenAIProvider.from_api_key(
-        settings.openai_api_key.get_secret_value(),
-        model=config.model,
+async def _resolve_cloud_api_key(
+    settings: Settings,
+    provider: LlmProviderName,
+    *,
+    session: AsyncSession | None,
+) -> str:
+    """openai / anthropic の API key を env > DB で解決する。 無ければ fatal。"""
+    if provider not in ("openai", "anthropic"):
+        raise LlmError(
+            category="fatal",
+            message=f"cloud API key は openai/anthropic のみです (provider='{provider}')。",
+            retryable=False,
+        )
+    api_key, source = await resolve_api_key(
+        settings,
+        provider,  # narrowed above to openai|anthropic
+        session=session,
     )
+    if not api_key:
+        raise LlmError(
+            category="fatal",
+            message=(
+                f"provider='{provider}' の API key が未設定です (credential_source={source})。"
+            ),
+            retryable=False,
+        )
+    return api_key
 
 
-def _build_anthropic(settings: Settings, config: ProviderConfig) -> AnthropicProvider:
-    """``AnthropicProvider`` を生成する。 subscription 等は FR-022 で拒否する。
+async def _build_openai(
+    settings: Settings,
+    config: ProviderConfig,
+    *,
+    session: AsyncSession | None,
+) -> OpenAIProvider:
+    """``OpenAIProvider`` を生成する。 ``codex_oauth`` は未配線のため拒否。"""
+    if config.auth_mode == "codex_oauth":
+        raise LlmError(
+            category="fatal",
+            message=(
+                "Codex OAuth (auth_mode='codex_oauth') は未実装です。"
+                " API key 認証 (auth_mode='api_key') を使用してください。"
+            ),
+            retryable=False,
+        )
+    api_key = await _resolve_cloud_api_key(settings, "openai", session=session)
+    return OpenAIProvider.from_api_key(api_key, model=config.model)
 
-    Raises:
-        LlmError: ``auth_mode`` が ``api_key`` 以外の場合(category="fatal")。
-    """
+
+async def _build_anthropic(
+    settings: Settings,
+    config: ProviderConfig,
+    *,
+    session: AsyncSession | None,
+) -> AnthropicProvider:
+    """``AnthropicProvider`` を生成する。 subscription 等は FR-022 で拒否する。"""
     if config.auth_mode != _ANTHROPIC_ALLOWED_AUTH_MODE:
         raise LlmError(
             category="fatal",
@@ -202,8 +278,9 @@ def _build_anthropic(settings: Settings, config: ProviderConfig) -> AnthropicPro
             ),
             retryable=False,
         )
+    api_key = await _resolve_cloud_api_key(settings, "anthropic", session=session)
     return AnthropicProvider(
-        api_key=settings.anthropic_api_key.get_secret_value(),
+        api_key=api_key,
         default_model=config.model,
         auth_mode=config.auth_mode,
     )
@@ -219,28 +296,26 @@ async def create_llm_provider(
     *,
     session: AsyncSession | None = None,
 ) -> LlmProvider:
-    """active provider を解決して :class:`LlmProvider` 実装を生成する。
-
-    env(:class:`Settings`)を基底に、 ``session`` が与えられれば ``app_state`` の
-    ``llm_provider`` / ``llm_auth_mode`` で上書きして active provider を決める(ADR-0019:
-    管理 UI からの再起動なし切替)。 ``session`` 省略時は env のみで解決し、
-    起動時バリデーション(FR-022 の早期拒否)に使える。
-
-    Args:
-        settings: env / ``.env`` から読み込んだ :class:`Settings`。
-        session: ``app_state`` を参照する AsyncSession(任意)。
-
-    Returns:
-        生成済みの :class:`LlmProvider`(``openai`` / ``anthropic`` / ``ollama``)。
-
-    Raises:
-        LlmError: provider 名が未知、 もしくは Anthropic に ``api_key`` 以外の
-            ``auth_mode`` が指定された場合(category="fatal"、 FR-022)。
-    """
+    """active provider を解決して :class:`LlmProvider` 実装を生成する。"""
     config = await resolve_provider_config(settings, session=session)
 
     if config.provider == "openai":
-        return _build_openai(settings, config)
+        return await _build_openai(settings, config, session=session)
     if config.provider == "anthropic":
-        return _build_anthropic(settings, config)
+        return await _build_anthropic(settings, config, session=session)
     return _build_ollama(settings, config)
+
+
+__all__ = [
+    "_DEFAULT_MODELS",
+    "_KEY_LLM_AUTH_MODE",
+    "_KEY_LLM_MODEL",
+    "_KEY_LLM_PROVIDER",
+    "_SUPPORTED_MODELS",
+    "ProviderConfig",
+    "app_state_table",
+    "create_llm_provider",
+    "resolve_model_for_provider",
+    "resolve_provider_config",
+    "validate_model_for_provider",
+]

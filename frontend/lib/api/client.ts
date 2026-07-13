@@ -76,3 +76,12 @@ export async function apiPost<T>(
   });
   return parse<T>(response);
 }
+
+/** DELETE。 body なし。 */
+export async function apiDelete<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await authFetch(path, { ...init, method: "DELETE" });
+  return parse<T>(response);
+}

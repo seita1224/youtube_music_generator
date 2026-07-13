@@ -5,9 +5,8 @@
 (``test_event_bus.py`` の streaming 系がこの理由でハングする)。 本テストは TestClient を介さず
 **SSE generator (``_event_stream``) を直接駆動**して契約を検証する:
 
-- 初期スナップショット (``JobHistory`` 写像) が最初に ``data: {json}`` で出る。
-- 購読登録がスナップショット送出より先 (契約 (e)) — 最初のフレーム後に
-  ``event_bus.subscriber_count()`` が 1。
+- 初期スナップショット (``JobStepEvent`` 写像) が最初に ``data: {json}`` で出る。
+- 購読登録がスナップショット読込・送出より先 — snapshot 読込中に publish した差分も届く。
 - 接続後 ``event_bus.publish`` した差分 (``step=music`` / ``genre`` 付き) が後続フレームに出る。
 - generator 終了 (``aclose`` = クライアント切断相当) で購読解除されリーク無し (count→0)。
 - ``JobHistory`` → ``JobEvent`` 写像 (status 同語彙・step は job_name 流用・context_id str 化)。
@@ -35,7 +34,7 @@ from ymg_backend.api.jobs import (
     router,
     stream_jobs,
 )
-from ymg_backend.infrastructure.db.models import JobHistory
+from ymg_backend.infrastructure.db.models import JobHistory, JobStepEvent
 from ymg_backend.infrastructure.event_bus import EventBus, JobEvent
 
 pytestmark = pytest.mark.unit
@@ -61,29 +60,94 @@ def _job_history(**overrides: Any) -> JobHistory:
     return JobHistory(**base)
 
 
+def _step_event(**overrides: Any) -> JobStepEvent:
+    """テスト用 ``JobStepEvent`` 行を生成する。"""
+    base: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "run_id": uuid.uuid4(),
+        "step": "cycle",
+        "status": "succeeded",
+        "genre": None,
+        "context_type": None,
+        "context_id": None,
+        "error_category": None,
+        "error_message": None,
+        "payload": None,
+        "created_at": datetime(2026, 6, 16, 9, 0, tzinfo=UTC),
+    }
+    base.update(overrides)
+    return JobStepEvent(**base)
+
+
 class _ScalarsResult:
     """``execute(...).scalars().all()`` を満たす最小結果。"""
 
-    def __init__(self, rows: list[JobHistory]) -> None:
+    def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
 
     def scalars(self) -> _ScalarsResult:
         return self
 
-    def all(self) -> list[JobHistory]:
+    def all(self) -> list[Any]:
         return list(self._rows)
 
 
 class _FakeSession:
     """初期スナップショット読み出し専用の in-memory セッション (commit しない)。"""
 
-    def __init__(self, rows: list[JobHistory]) -> None:
+    def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
         self.executed = False
 
     async def execute(self, _statement: Any) -> _ScalarsResult:
         self.executed = True
         return _ScalarsResult(self._rows)
+
+
+class _ImmediateSessionFactory:
+    """``async with factory() as session`` を満たす即時セッション工場。"""
+
+    def __init__(self, session: _FakeSession) -> None:
+        self._session = session
+        self.enter_count = 0
+
+    def __call__(self) -> _ImmediateSessionFactory:
+        return self
+
+    async def __aenter__(self) -> _FakeSession:
+        self.enter_count += 1
+        return self._session
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+class _GatedSessionFactory:
+    """snapshot 読込をゲートし、 購読後〜読込完了前の publish を再現する。"""
+
+    def __init__(
+        self,
+        session: _FakeSession,
+        *,
+        load_started: asyncio.Event,
+        continue_load: asyncio.Event,
+    ) -> None:
+        self._session = session
+        self._load_started = load_started
+        self._continue_load = continue_load
+        self.enter_count = 0
+
+    def __call__(self) -> _GatedSessionFactory:
+        return self
+
+    async def __aenter__(self) -> _FakeSession:
+        self.enter_count += 1
+        self._load_started.set()
+        await self._continue_load.wait()
+        return self._session
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
 
 
 # ============================================================================
@@ -169,34 +233,42 @@ def test_format_event_is_sse_data_frame() -> None:
 async def test_event_stream_emits_snapshot_then_live_diff_and_unsubscribes() -> None:
     """購読登録 → スナップショット送出 → 差分配信 → ``aclose`` で購読解除 (リーク無し)。
 
-    専用 ``EventBus`` を ``monkeypatch`` で差し込み、 module-level singleton に依存しない。
+    専用 ``EventBus`` を差し込み、 module-level singleton に依存しない。
+    ``run_id`` 一致イベントのみ流す。
     """
     bus = EventBus()
-    snapshot = [
-        JobEvent(
-            timestamp="2026-06-16T09:05:00+09:00",
-            job_name="daily_cycle",
-            step="daily_cycle",
-            status="succeeded",
-        )
-    ]
-    gen = _event_stream(snapshot, bus=bus)
+    run_id = uuid.uuid4()
+    snap_row = _step_event(
+        run_id=run_id,
+        step="cycle",
+        status="succeeded",
+        created_at=datetime(2026, 6, 16, 9, 5, tzinfo=UTC),
+    )
+    factory = _ImmediateSessionFactory(_FakeSession([snap_row]))
+    gen = _event_stream(
+        run_id=run_id,
+        job_name="music_generation",
+        bus=bus,
+        session_factory=factory,  # type: ignore[arg-type]
+    )
 
     # 1) 最初のフレーム = 初期スナップショット。
     first = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
     assert first.startswith("data: ")
     assert json.loads(first[len("data: ") : -2])["status"] == "succeeded"
+    assert factory.enter_count == 1  # 短い TX で snapshot を読んだ。
 
     # 購読登録はスナップショット送出より先 (契約 (e))。
     assert bus.subscriber_count() == 1
 
-    # 2) 接続後 publish した差分が次フレームで届く。
+    # 2) 接続後 publish した差分が次フレームで届く (run_id 一致)。
     bus.publish(
         JobEvent(
             timestamp="",
-            job_name="daily_cycle",
+            job_name="music_generation",
             step="music",
             status="running",
+            run_id=str(run_id),
             genre="lofi",
         )
     )
@@ -205,25 +277,111 @@ async def test_event_stream_emits_snapshot_then_live_diff_and_unsubscribes() -> 
     assert payload["step"] == "music"
     assert payload["status"] == "running"
     assert payload["genre"] == "lofi"
+    assert payload["run_id"] == str(run_id)
 
-    # 3) generator を閉じる (= クライアント切断相当) と購読解除される。
+    # 3) 別 run_id のイベントはスキップされる。
+    bus.publish(
+        JobEvent(
+            timestamp="",
+            job_name="music_generation",
+            step="music",
+            status="failed",
+            run_id=str(uuid.uuid4()),
+        )
+    )
+    bus.publish(
+        JobEvent(
+            timestamp="",
+            job_name="music_generation",
+            step="post",
+            status="succeeded",
+            run_id=str(run_id),
+        )
+    )
+    third = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+    assert json.loads(third[len("data: ") : -2])["step"] == "post"
+
+    # 4) generator を閉じる (= クライアント切断相当) と購読解除される。
     await gen.aclose()
     assert bus.subscriber_count() == 0  # リーク無し。
+
+
+async def test_event_stream_does_not_lose_events_published_during_snapshot_load() -> None:
+    """subscribe 後・snapshot 読込完了前に publish された差分は取りこぼさない。
+
+    旧実装は snapshot を subscribe 前に固定していたため、 ``T_snap``〜``T_sub`` の
+    イベントが snapshot にも live にも載らなかった。 本テストはそのレースを再現する。
+    """
+    bus = EventBus()
+    run_id = uuid.uuid4()
+    snap_row = _step_event(run_id=run_id, step="cycle", status="succeeded")
+    load_started = asyncio.Event()
+    continue_load = asyncio.Event()
+    factory = _GatedSessionFactory(
+        _FakeSession([snap_row]),
+        load_started=load_started,
+        continue_load=continue_load,
+    )
+    gen = _event_stream(
+        run_id=run_id,
+        job_name="music_generation",
+        bus=bus,
+        session_factory=factory,  # type: ignore[arg-type]
+    )
+
+    async def _drive() -> list[str]:
+        frames: list[str] = []
+        frames.append(await gen.__anext__())  # snapshot
+        frames.append(await gen.__anext__())  # live during-load event
+        await gen.aclose()
+        return frames
+
+    task = asyncio.create_task(_drive())
+    await asyncio.wait_for(load_started.wait(), timeout=1.0)
+    assert bus.subscriber_count() == 1  # snapshot 読込中でも既に購読済み。
+
+    bus.publish(
+        JobEvent(
+            timestamp="2026-06-16T09:00:01+09:00",
+            job_name="music_generation",
+            step="music",
+            status="running",
+            run_id=str(run_id),
+            genre="lofi",
+        )
+    )
+    continue_load.set()
+
+    frames = await asyncio.wait_for(task, timeout=2.0)
+    assert bus.subscriber_count() == 0
+
+    snap_payload = json.loads(frames[0][len("data: ") : -2])
+    live_payload = json.loads(frames[1][len("data: ") : -2])
+    assert snap_payload["step"] == "cycle"
+    assert snap_payload["status"] == "succeeded"
+    assert live_payload["step"] == "music"
+    assert live_payload["status"] == "running"
+    assert live_payload["genre"] == "lofi"
+    assert live_payload["run_id"] == str(run_id)
 
 
 # ============================================================================
 # router / 認証 / STEPS 語彙
 # ============================================================================
-def test_router_exposes_jobs_stream_route() -> None:
-    """``router`` が ``GET /jobs/stream`` を公開する。"""
+def test_router_exposes_jobs_stream_and_runs_routes() -> None:
+    """``router`` が runs / events / stream を公開する。"""
     paths = {getattr(r, "path", None) for r in router.routes}
     assert "/jobs/stream" in paths
+    assert "/jobs/runs" in paths
+    assert "/jobs/runs/{run_id}/events" in paths
 
 
 def test_stream_endpoint_requires_basic_auth_dependency() -> None:
     """``stream_jobs`` が ``BasicAuthUser`` 引数を持つ (単体マウントでも 401 を強制)。"""
     annotations = stream_jobs.__annotations__
     assert "user" in annotations  # BasicAuthUser (Annotated[str, Depends(require_basic_auth)])。
+    assert "run_id" in annotations
+    assert "session" not in annotations  # 短い TX は内部で開く (接続中に握らない)。
 
 
 def test_steps_vocabulary_is_seven_fixed_values() -> None:

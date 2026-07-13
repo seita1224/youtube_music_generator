@@ -62,8 +62,8 @@ cp .env.example .env
 $EDITOR .env
 ```
 
-最低限「これだけは値を入れる」3 つ: **`POSTGRES_PASSWORD` / `ADMIN_PASSWORD` / `FERNET_KEY`**。
-これらが空だと `make up` (compose の `:?` チェック) や backend 起動が失敗する。
+最低限「これだけは値を入れる」4 つ: **`POSTGRES_PASSWORD` / `ADMIN_PASSWORD` / `FERNET_KEY` / `AUTH_SESSION_SECRET`**。
+これらが空だと `make up` (compose の `:?` チェック) や backend / frontend 起動が失敗する。
 
 必須項目 (テンプレ全体は `.env.example`):
 
@@ -82,17 +82,22 @@ POSTGRES_USER=ymg
 POSTGRES_PASSWORD=__set_strong_value__       # ← 必須
 
 # --- Fernet(ADR-0012)バックアップ対象外 ---
-FERNET_KEY=__base64_44_chars__              # ← 必須。 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+FERNET_KEY=__base64_44_chars__              # ← 必須。 YouTube OAuth + LLM API key 暗号化に共用 (ADR-0012 / ADR-0019)
+                                            # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
-# --- 管理 UI Basic 認証(ADR-0013)---
+# --- 管理 UI 認証(ADR-0013)---
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=__set_strong_value__          # ← 必須 (frontend ビルド時にも注入される)
+ADMIN_PASSWORD=__set_strong_value__          # ← 必須 (backend Basic + frontend ログイン検証。空は起動拒否)
+AUTH_SESSION_SECRET=__set_strong_value__     # ← 必須。UTF-8 32 バイト以上。 `openssl rand -base64 48`
+AUTH_COOKIE_SECURE=false                     # LAN HTTP は false。 HTTPS 時は true
+# frontend compose は .env wholesale ではなく上記 + BACKEND_BASE_URL のみ注入する
+# backend の /docs /redoc /openapi.json は無効。契約は specs/.../contracts/backend-api.yaml
 
 # --- LLM Provider(ADR-0019)---
-LLM_PROVIDER=openai                         # openai / anthropic / ollama
-LLM_AUTH_MODE=api_key                       # api_key / codex_oauth
-OPENAI_API_KEY=__sk-...__
-ANTHROPIC_API_KEY=__sk-ant-...__
+LLM_PROVIDER=ollama                         # openai / anthropic / ollama (ローカル推奨は ollama)
+LLM_AUTH_MODE=api_key                       # api_key のみ正式サポート。 codex_oauth は未配線 (起動拒否 / PUT 422)
+OPENAI_API_KEY=                             # 非空なら環境変数が SoT。空なら /llm から Fernet 暗号化 DB 保存可
+ANTHROPIC_API_KEY=
 OLLAMA_BASE_URL=http://localhost:11434
 
 # --- YouTube ---
@@ -232,7 +237,7 @@ curl -fsS -u admin:__pass__ http://127.0.0.1:8000/health | jq
 # }
 
 # 管理 UI
-open http://localhost:3000          # Basic auth でログイン (既定ポート 3000)
+open http://localhost:3000          # /login で ADMIN_* を入力 (既定ポート 3000)
 # ポートを占有されている / Docker Desktop の転送が stuck する場合は
 # .env の FRONTEND_HOST_PORT を変更 (例 3001) → make up し直し → http://localhost:3001
 ```

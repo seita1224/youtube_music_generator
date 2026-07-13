@@ -247,6 +247,16 @@ def test_list_plans_filters_by_status(client: TestClient, session: _FakeSession)
     assert body["items"][0]["status"] == "approved"
 
 
+def test_list_plans_accepts_music_generated_status(
+    client: TestClient, session: _FakeSession
+) -> None:
+    """PlanStatus に music_generated が含まれ、 422 にならない。"""
+    session.rows = [_make_plan(status="music_generated")]
+    resp = client.get("/plans", params={"status": "music_generated"}, auth=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["status"] == "music_generated"
+
+
 # --- POST /plans -----------------------------------------------------------
 def test_generate_plan_creates_daily_plan(
     client: TestClient,

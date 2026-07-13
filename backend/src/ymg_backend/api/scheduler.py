@@ -11,6 +11,10 @@
   (投稿開始) / ``false → true`` (dryrun 復帰) のいずれも ``audit_log`` に記録する
   (ADR-0035 §2: 不可逆判断のトレーサビリティ)。 契約の ``/scheduler`` には ``enabled`` しか
   無いため、 posting mode 切替は別ルートとして本ルータに置く。
+- ``POST /scheduler/run-now`` — 承認済み Daily Plan の音楽生成を即時 1 回起動する
+  (ADR-0006 / ADR-0011)。 ``job_history(running)`` 予約後に 202 + ``run_id`` を返す。
+  予約 commit 後に audit が失敗した場合は予約を ``finalize(failed)`` して single-flight
+  を解放してから例外を再送出する。
 
 設計方針:
 
@@ -19,27 +23,40 @@
 - ``commit`` は本ハンドラの責務 (HTTP リクエスト = トランザクション境界)。 ``write_audit_log`` は
   flush までなので、 状態 upsert と audit を 1 トランザクションでまとめて commit する。
 - :class:`~ymg_backend.infrastructure.scheduler.SchedulerService` は ``main.py`` の lifespan が
-  ``app.state.scheduler_service`` に格納する前提 (配線は後段)。 未配線でも 500 で落とさず、
-  状態フラグの永続化と audit は必ず行い、 ジョブ出し入れだけを skip する (health の degraded
-  と同じ「副作用は best-effort」方針)。
+  ``app.state.scheduler_service`` / ``app.state.music_run_service`` に格納する。 未配線でも
+  ``PUT /scheduler`` は 500 で落とさず、 状態フラグの永続化と audit は必ず行い、 ジョブ
+  出し入れだけを skip する (health の degraded と同じ「副作用は best-effort」方針)。
+  ``POST /scheduler/run-now`` は未配線時 503。
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
-from datetime import datetime
+import uuid
+from datetime import date, datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, MetaData, String, Table, select
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ymg_backend.core.security import BasicAuthUser
+from ymg_backend.domain.pipeline.music_run import (
+    MusicGenerationBusyError,
+    MusicRunService,
+    PlanNotApprovedError,
+    PlanNotFoundError,
+)
 from ymg_backend.infrastructure.audit import write_audit_log
 from ymg_backend.infrastructure.db.session import get_session
+
+# run-now のバックグラウンド Task 参照を保持し GC で消えないようにする (RUF006)。
+_run_now_tasks: Final[set[asyncio.Task[None]]] = set()
 
 router: Final = APIRouter(tags=["scheduler"])
 
@@ -52,6 +69,7 @@ _ACTION_SCHEDULER_ENABLED: Final[str] = "scheduler_enabled"
 _ACTION_SCHEDULER_DISABLED: Final[str] = "scheduler_disabled"
 _ACTION_DRYRUN_ENABLED: Final[str] = "dryrun_enabled"
 _ACTION_DRYRUN_DISABLED: Final[str] = "dryrun_disabled"
+_ACTION_SCHEDULER_RUN_NOW: Final[str] = "scheduler_run_now"
 
 # app_state.value (JSONB) への疎結合参照用 Core Table (ORM 層非依存)。
 _metadata: Final[MetaData] = MetaData()
@@ -87,6 +105,25 @@ class ModeState(BaseModel):
     """``PUT /scheduler/mode`` のレスポンス (現在の posting mode)。"""
 
     dryrun_enabled: bool
+
+
+class RunNowRequest(BaseModel):
+    """``POST /scheduler/run-now`` のリクエストボディ (``plan_id`` 必須)。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: uuid.UUID = Field(description="status=approved の Daily Plan id")
+
+
+class RunNowResponse(BaseModel):
+    """``POST /scheduler/run-now`` の 202 レスポンス。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accepted: bool
+    run_id: uuid.UUID
+    plan_id: uuid.UUID
+    target_date: date
 
 
 def _decode_app_state_bool(raw: object) -> bool | None:
@@ -158,15 +195,6 @@ async def set_scheduler(
     状態が変わった場合のみ ``app_state`` を更新し ``audit_log`` に記録、 さらに
     ``app.state.scheduler_service`` 経由で日次ジョブを ``add`` / ``remove`` する。 同値要求は
     no-op (audit もジョブ操作もしない) で現状を返す。
-
-    Args:
-        body: ``{"enabled": bool}``。
-        request: ``app.state.scheduler_service`` 参照用。
-        user: Basic 認証済みユーザー名 (audit actor)。
-        session: DB セッション (本ハンドラが commit する)。
-
-    Returns:
-        切替後の :class:`SchedulerState`。
     """
     current, _ = await _read_flag(session, _KEY_SCHEDULER_ENABLED, default=False)
     if current == body.enabled:
@@ -194,19 +222,7 @@ async def set_mode(
     user: BasicAuthUser,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ModeState:
-    """dryrun ↔ 投稿モードを切替える (ADR-0035 §2: 切替は audit 必須)。
-
-    ``true → false`` (投稿開始) / ``false → true`` (dryrun 復帰) のいずれも ``audit_log`` に
-    ``from`` / ``to`` を記録する。 同値要求は no-op で現状を返す。
-
-    Args:
-        body: ``{"dryrun_enabled": bool}``。
-        user: Basic 認証済みユーザー名 (audit actor)。
-        session: DB セッション (本ハンドラが commit する)。
-
-    Returns:
-        切替後の :class:`ModeState`。
-    """
+    """dryrun ↔ 投稿モードを切替える (ADR-0035 §2: 切替は audit 必須)。"""
     current, _ = await _read_flag(session, _KEY_DRYRUN_ENABLED, default=True)
     if current == body.dryrun_enabled:
         return ModeState(dryrun_enabled=current)
@@ -225,16 +241,128 @@ async def set_mode(
     return ModeState(dryrun_enabled=body.dryrun_enabled)
 
 
-def _apply_scheduler_jobs(request: Request, *, enabled: bool) -> None:
-    """``app.state.scheduler_service`` 経由で日次ジョブを ``add`` / ``remove`` する。
+@router.post(
+    "/scheduler/run-now",
+    response_model=RunNowResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start music generation for an approved Daily Plan",
+)
+async def run_scheduler_now(
+    request: Request,
+    body: RunNowRequest,
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RunNowResponse:
+    """承認済み Daily Plan の音楽生成を即時 1 回起動する (ADR-0006 / ADR-0011)。
 
-    scheduler_service が未配線 (後段タスク未完了 / lifespan 非実行のテスト) の場合は、 状態
-    フラグの永続化と audit は済んでいるためジョブ操作だけを skip する (副作用は best-effort)。
+    実行予約時に ``job_history(status=running)`` を commit し、 その id を ``run_id`` として
+    返す。 長時間処理はバックグラウンドで実行し HTTP は 202。
+    起動操作は ``audit_log`` に actor / run_id / plan_id を残す。
 
-    Args:
-        request: ``app.state.scheduler_service`` を引くための ``Request``。
-        enabled: ``True`` で enable (ジョブ登録)、 ``False`` で disable (ジョブ除去)。
+    Raises:
+        HTTPException: 404 (Plan 不在) / 409 (未承認 or 別 run running) / 503 (未配線)。
     """
+    music_run_service = getattr(request.app.state, "music_run_service", None)
+    if music_run_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="music_run_service not wired; cannot run music generation",
+        )
+
+    try:
+        reservation = await music_run_service.reserve_run_now(session, plan_id=body.plan_id)
+    except PlanNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PlanNotApprovedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Plan is not approved (status={exc.status})",
+        ) from exc
+    except MusicGenerationBusyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    # reserve_run_now は job_history(running) を既に commit 済み。 audit 失敗時も
+    # single-flight 枠を解放しないと、 再起動の orphan 整合まで全 run が 409 になる。
+    try:
+        await write_audit_log(
+            session,
+            action=_ACTION_SCHEDULER_RUN_NOW,
+            actor=user,
+            target_type="plan",
+            target_id=str(reservation.plan_id),
+            payload={
+                "actor": user,
+                "run_id": str(reservation.run_id),
+                "plan_id": str(reservation.plan_id),
+                "target_date": reservation.target_date.isoformat(),
+            },
+        )
+        await session.commit()
+    except Exception as audit_exc:
+        logger.bind(component="api.scheduler").error(
+            "run-now audit failed after reservation; finalizing run as failed",
+            run_id=str(reservation.run_id),
+            plan_id=str(reservation.plan_id),
+            error=str(audit_exc),
+        )
+        with contextlib.suppress(Exception):  # 解放を優先し、 rollback 失敗は握る
+            await session.rollback()
+        await music_run_service.finalize(
+            run_id=reservation.run_id,
+            status="failed",
+            error_category="fatal",
+            error_message=f"audit_log write failed after reservation: {audit_exc}",
+        )
+        raise
+
+    task = asyncio.create_task(
+        _execute_run_now(music_run_service, run_id=reservation.run_id, plan_id=reservation.plan_id),
+        name=f"scheduler-run-now:{reservation.run_id}",
+    )
+    _run_now_tasks.add(task)
+    task.add_done_callback(_run_now_tasks.discard)
+    logger.bind(component="api.scheduler").info(
+        "run-now accepted",
+        run_id=str(reservation.run_id),
+        plan_id=str(reservation.plan_id),
+        target_date=reservation.target_date.isoformat(),
+        actor=user,
+    )
+    return RunNowResponse(
+        accepted=True,
+        run_id=reservation.run_id,
+        plan_id=reservation.plan_id,
+        target_date=reservation.target_date,
+    )
+
+
+async def _execute_run_now(
+    music_run_service: MusicRunService,
+    *,
+    run_id: uuid.UUID,
+    plan_id: uuid.UUID,
+) -> None:
+    """予約済み run を実行する (例外はログして握り潰す)。"""
+    log = logger.bind(
+        component="api.scheduler.run_now",
+        run_id=str(run_id),
+        plan_id=str(plan_id),
+    )
+    try:
+        await music_run_service.execute(run_id=run_id, plan_id=plan_id)
+        log.info("run-now completed")
+    except Exception as exc:  # バックグラウンド失敗でイベントループを落とさない
+        log.error("run-now failed: {}", exc)
+
+
+def _apply_scheduler_jobs(request: Request, *, enabled: bool) -> None:
+    """``app.state.scheduler_service`` 経由で日次ジョブを ``add`` / ``remove`` する。"""
     service = getattr(request.app.state, "scheduler_service", None)
     if service is None:
         logger.bind(component="api.scheduler").warning(

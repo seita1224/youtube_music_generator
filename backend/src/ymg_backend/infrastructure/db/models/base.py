@@ -14,12 +14,28 @@ from __future__ import annotations
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import DeclarativeBase
 
-# --- ENUM 定義 (data-model.md §Enums / 001_initial.py `_ENUMS`) ---
-# migration 側と完全一致させること。 順序も DDL の宣言順を保持する。
+# --- ENUM 定義 (data-model.md §Enums / 001_initial.py `_ENUMS` + 003) ---
+# migration 側と完全一致させること。 順序も DDL の宣言順 / ADD VALUE 順を保持する。
 _ENUM_VALUES: dict[str, tuple[str, ...]] = {
     "plan_cycle": ("daily", "weekly"),
-    "plan_status": ("generated", "approved", "executing", "completed", "failed"),
-    "post_status": ("pending", "generating", "generated", "posting", "posted", "failed"),
+    # music_generated は 003_music_generation_jobs で ENUM 末尾に ADD VALUE される。
+    "plan_status": (
+        "generated",
+        "approved",
+        "executing",
+        "completed",
+        "failed",
+        "music_generated",
+    ),
+    "post_status": (
+        "pending",
+        "generating",
+        "generated",
+        "posting",
+        "posted",
+        "failed",
+        "music_generated",
+    ),
     "gpu_job_type": ("music", "image"),
     "gpu_job_status": ("queued", "running", "succeeded", "failed"),
     "dryrun_state": ("pending", "approved", "rejected", "auto_expired", "posted"),

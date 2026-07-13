@@ -155,10 +155,10 @@
 - **Alternatives**: Django (重い)、 Flask (依存薄いが OpenAPI 連動弱)、 別プロセス scheduler (運用箱増)、 SQLite (拡張性問題)
 - **Source**: ADR-0009, ADR-0010, ADR-0011, ADR-0014
 
-### Next.js (App Router) 管理 UI、 Basic 認証(LAN 内)
+### Next.js (App Router) 管理 UI、 frontend セッション + backend Basic(LAN 内)
 
-- **Decision**: フロントエンドは Next.js、 LAN 内 Basic 認証で保護
-- **Rationale**: ADR-0001 で「画面要件があるのでフロントは Next.js が自然」と確定。 Basic 認証は LAN 信頼前提で OK
+- **Decision**: フロントエンドは Next.js。管理 UI は `/login` + 署名付きセッション cookie。backend 直叩きは HTTP Basic(ADR-0013)
+- **Rationale**: ADR-0001 で「画面要件があるのでフロントは Next.js が自然」と確定。資格情報を `NEXT_PUBLIC_*` に載せない。LAN 信頼前提で HTTPS は当面なし
 - **Source**: ADR-0001, ADR-0013
 
 ### OAuth トークン = Fernet 暗号化 in PostgreSQL

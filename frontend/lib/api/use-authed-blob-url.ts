@@ -4,10 +4,9 @@ import * as React from "react";
 
 import { authFetch } from "@/lib/auth";
 
-// Basic 認証必須の backend メディア(動画/サムネ)を authFetch で取得し blob object URL 化する。
-// frontend ページ自体は Basic 認証下に無く、 ブラウザは資格情報を持たないため、 素の
-// <img src>/<video src> は 401 になる。 authFetch(NEXT_PUBLIC 資格情報を注入)で取得し
-// object URL を src に渡すことで認証付きで表示する。 path=null の間は取得しない。
+// 認証必須の backend メディア(動画/サムネ)を authFetch で取得し blob object URL 化する。
+// 素の <img src>/<video src> ではセッション cookie 経由の BFF 取得にならない場合があるため、
+// authFetch(same-origin cookie)で取得し object URL を src に渡す。 path=null の間は取得しない。
 
 /**
  * 認証付きで取得したメディアの object URL を返す。
@@ -36,6 +35,13 @@ export function useAuthedBlobUrl(path: string | null): string | null {
           return;
         }
         objectUrl = URL.createObjectURL(blob);
+        // create 直後に cancel された場合、 cleanup は objectUrl=null のまま走っている
+        // 可能性があるため、 ここで即 revoke してリークを防ぐ。
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+          return;
+        }
         setUrl(objectUrl);
       } catch {
         // ネットワーク/認証失敗時は null のまま。 呼び出し側がフォールバック表示する。

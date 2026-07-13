@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
@@ -133,7 +134,7 @@ class _RecordingRunner:
         self.calls: list[date] = []
         self._fail = fail
 
-    async def __call__(self, *, session: Any, target_date: date) -> None:
+    async def __call__(self, *, target_date: date) -> None:
         self.calls.append(target_date)
         if self._fail is not None:
             raise self._fail
@@ -256,7 +257,7 @@ def _patch_sessionmaker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_run_slot_invokes_cycle_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     """cron 発火で当日分の cycle_runner が呼ばれる。"""
-    _patch_sessionmaker(monkeypatch)
+    del monkeypatch  # session は CycleRunner 側の責務 (本テストでは不要)。
     runner = _RecordingRunner()
     service = _make_service(_FakeScheduler(), runner=runner)
 
@@ -272,7 +273,7 @@ async def test_run_slot_swallows_error_and_notifies(monkeypatch: pytest.MonkeyPa
     recoverable 等の通常例外は握り潰してサイクルを中断するのみ(scheduler 継続)。 scheduler の
     自動停止はインフラ級 fatal(:class:`SchedulerHaltError`)に限る(下の halt テスト参照)。
     """
-    _patch_sessionmaker(monkeypatch)
+    del monkeypatch
     runner = _RecordingRunner(fail=RecoverableError("boom"))
     notifier = _SpyNotifier()
     sched = _FakeScheduler()
@@ -291,7 +292,7 @@ async def test_run_slot_disables_scheduler_on_halt_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR-113: SchedulerHaltError(DB 不達等インフラ級 fatal)で scheduler を自動停止する。"""
-    _patch_sessionmaker(monkeypatch)
+    del monkeypatch
     runner = _RecordingRunner(fail=SchedulerHaltError("db unreachable (scheduler 停止)"))
     notifier = _SpyNotifier()
     sched = _FakeScheduler()
@@ -311,7 +312,7 @@ async def test_run_slot_keeps_scheduler_on_non_halt_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR-113: halt でない通常 FatalError では scheduler を止めない(特定 fatal のみ停止)。"""
-    _patch_sessionmaker(monkeypatch)
+    del monkeypatch
     runner = _RecordingRunner(fail=FatalError("non-halting fatal"))
     notifier = _SpyNotifier()
     sched = _FakeScheduler()
@@ -504,3 +505,301 @@ async def test_put_mode_default_dryrun_true_same_value_noop() -> None:
     assert state.dryrun_enabled is True
     assert session.audit_rows == []
     assert session.commit_count == 0
+
+
+# --- API: POST /scheduler/run-now --------------------------------------------------
+
+
+class _FakeAppStateWithRunner:
+    def __init__(self, *, music_run_service: Any = None, scheduler_service: Any = None) -> None:
+        self.music_run_service = music_run_service
+        self.scheduler_service = scheduler_service
+        self.cycle_runner = None
+
+
+class _FakeAppWithRunner:
+    def __init__(self, *, music_run_service: Any = None, scheduler_service: Any = None) -> None:
+        self.state = _FakeAppStateWithRunner(
+            music_run_service=music_run_service, scheduler_service=scheduler_service
+        )
+
+
+class _FakeRequestWithRunner:
+    def __init__(self, *, music_run_service: Any = None, scheduler_service: Any = None) -> None:
+        self.app = _FakeAppWithRunner(
+            music_run_service=music_run_service, scheduler_service=scheduler_service
+        )
+
+
+class _StubMusicRunService:
+    def __init__(
+        self,
+        *,
+        reservation: Any = None,
+        fail: Exception | None = None,
+    ) -> None:
+        self.reservation = reservation
+        self.fail = fail
+        self.execute_calls: list[tuple[Any, Any]] = []
+        self.finalize_calls: list[dict[str, Any]] = []
+
+    async def reserve_run_now(self, session: Any, *, plan_id: Any) -> Any:
+        del session
+        if self.fail is not None:
+            raise self.fail
+        assert self.reservation is not None
+        assert self.reservation.plan_id == plan_id
+        return self.reservation
+
+    async def execute(self, *, run_id: Any, plan_id: Any) -> None:
+        self.execute_calls.append((run_id, plan_id))
+
+    async def finalize(
+        self,
+        *,
+        run_id: Any,
+        status: str,
+        error_category: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.finalize_calls.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "error_category": error_category,
+                "error_message": error_message,
+            }
+        )
+
+
+async def test_run_now_returns_503_when_music_run_service_unwired() -> None:
+    """music_run_service 未配線なら 503。"""
+    from fastapi import HTTPException
+
+    request = _FakeRequestWithRunner(music_run_service=None)
+    session = _FakeSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=uuid.uuid4()),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 503
+
+
+async def test_run_now_accepts_and_returns_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """配線済みなら 202 相当の accepted + run_id / plan_id / target_date を返す。"""
+    from unittest.mock import MagicMock
+
+    from ymg_backend.domain.pipeline.music_run import MusicRunReservation
+
+    plan_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    reservation = MusicRunReservation(
+        run_id=run_id,
+        plan_id=plan_id,
+        target_date=date(2026, 7, 11),
+        trigger="run_now",
+    )
+    service = _StubMusicRunService(reservation=reservation)
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+    scheduled: list[Any] = []
+
+    def _capture_create_task(coro: Any, *, name: str | None = None) -> Any:
+        del name
+        scheduled.append(coro)
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr(api_scheduler.asyncio, "create_task", _capture_create_task)
+
+    result = await api_scheduler.run_scheduler_now(
+        request=request,  # type: ignore[arg-type]
+        body=api_scheduler.RunNowRequest(plan_id=plan_id),
+        user="seita",
+        session=session,  # type: ignore[arg-type]
+    )
+
+    assert result.accepted is True
+    assert result.run_id == run_id
+    assert result.plan_id == plan_id
+    assert result.target_date == date(2026, 7, 11)
+    assert len(scheduled) == 1
+    assert len(session.audit_rows) == 1
+    audit = session.audit_rows[0]
+    assert audit["action"] == "scheduler_run_now"
+    assert audit["actor"] == "seita"
+    assert str(plan_id) in str(audit.get("target_id", ""))
+    assert str(run_id) in str(audit.get("payload", {}))
+
+
+async def test_run_now_returns_409_when_busy() -> None:
+    """別の music_generation が running なら 409。"""
+    from fastapi import HTTPException
+
+    from ymg_backend.domain.pipeline.music_run import MusicGenerationBusyError
+
+    service = _StubMusicRunService(fail=MusicGenerationBusyError())
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=uuid.uuid4()),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "別の音楽生成が実行中" in str(exc_info.value.detail)
+
+
+async def test_run_now_returns_409_when_not_approved() -> None:
+    """未承認 Plan は 409。"""
+    from fastapi import HTTPException
+
+    from ymg_backend.domain.pipeline.music_run import PlanNotApprovedError
+
+    plan_id = uuid.uuid4()
+    service = _StubMusicRunService(
+        fail=PlanNotApprovedError(plan_id=plan_id, status="generated")
+    )
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=plan_id),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 409
+
+
+async def test_run_now_returns_404_when_plan_missing() -> None:
+    """Plan 不在は 404。"""
+    from fastapi import HTTPException
+
+    from ymg_backend.domain.pipeline.music_run import PlanNotFoundError
+
+    service = _StubMusicRunService(fail=PlanNotFoundError("missing"))
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=uuid.uuid4()),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+async def test_execute_run_now_calls_music_run_service() -> None:
+    """``_execute_run_now`` が MusicRunService.execute を呼ぶ。"""
+    service = _StubMusicRunService()
+    run_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+
+    await api_scheduler._execute_run_now(service, run_id=run_id, plan_id=plan_id)  # type: ignore[arg-type]
+
+    assert service.execute_calls == [(run_id, plan_id)]
+
+
+async def test_run_now_finalizes_reservation_when_audit_commit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """予約 commit 後に audit commit が失敗したら finalize(failed) で single-flight を解放する。
+
+    ``reserve_run_now`` は ``job_history(running)`` を既に commit 済みのため、
+    audit 失敗で HTTP エラーに落ちると running 行が残り全 run が 409 になる。
+    """
+    from ymg_backend.domain.pipeline.music_run import MusicRunReservation
+
+    plan_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    reservation = MusicRunReservation(
+        run_id=run_id,
+        plan_id=plan_id,
+        target_date=date(2026, 7, 11),
+        trigger="run_now",
+    )
+    service = _StubMusicRunService(reservation=reservation)
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+    scheduled: list[Any] = []
+
+    def _capture_create_task(coro: Any, *, name: str | None = None) -> Any:
+        del name
+        scheduled.append(coro)
+        coro.close()
+        return object()
+
+    async def _failing_commit() -> None:
+        raise RuntimeError("audit commit failed")
+
+    monkeypatch.setattr(api_scheduler.asyncio, "create_task", _capture_create_task)
+    monkeypatch.setattr(session, "commit", _failing_commit)
+
+    with pytest.raises(RuntimeError, match="audit commit failed"):
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=plan_id),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert scheduled == []  # execute は起動しない。
+    assert len(service.finalize_calls) == 1
+    fin = service.finalize_calls[0]
+    assert fin["run_id"] == run_id
+    assert fin["status"] == "failed"
+    assert fin["error_category"] == "fatal"
+    assert "audit_log write failed" in str(fin["error_message"])
+
+
+async def test_run_now_finalizes_reservation_when_audit_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``write_audit_log`` 自体が失敗しても finalize(failed) で枠を解放する。"""
+    from ymg_backend.domain.pipeline.music_run import MusicRunReservation
+
+    plan_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    reservation = MusicRunReservation(
+        run_id=run_id,
+        plan_id=plan_id,
+        target_date=date(2026, 7, 11),
+        trigger="run_now",
+    )
+    service = _StubMusicRunService(reservation=reservation)
+    request = _FakeRequestWithRunner(music_run_service=service)
+    session = _FakeSession()
+
+    async def _boom_audit(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr(api_scheduler, "write_audit_log", _boom_audit)
+
+    with pytest.raises(RuntimeError, match="audit insert failed"):
+        await api_scheduler.run_scheduler_now(
+            request=request,  # type: ignore[arg-type]
+            body=api_scheduler.RunNowRequest(plan_id=plan_id),
+            user="seita",
+            session=session,  # type: ignore[arg-type]
+        )
+
+    assert len(service.finalize_calls) == 1
+    assert service.finalize_calls[0]["run_id"] == run_id
+    assert service.finalize_calls[0]["status"] == "failed"

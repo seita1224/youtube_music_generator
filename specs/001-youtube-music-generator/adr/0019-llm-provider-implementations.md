@@ -56,12 +56,31 @@ LLMProvider 抽象化層に **3 つの provider 実装**を持ち、各 provider
 - 環境変数 `LLM_PROVIDER`(`openai` / `anthropic` / `ollama`)で選択
 - 環境変数 `LLM_AUTH_MODE`(`api_key` / `codex_oauth`)で認証方式を選択(provider が対応している場合のみ)
 - 管理UI からも切替可能(再起動なし、次回ジョブから反映)
+- 選択モデルは `app_state.llm_model` に永続化し、 factory が provider の supported models で検証する
+
+### API key の保管 (write-only)
+
+- OpenAI / Anthropic の API key は **環境変数を最優先** (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`)
+- 環境変数が空のときのみ、管理 UI から `llm_provider_secrets` へ Fernet 暗号化保存できる (ADR-0012 と同じ `FERNET_KEY` / `TokenCipher`)
+- 実行時の解決順位: **env 非空 > DB 暗号化行 > none**
+- GET は `credential_source: env|db|none|n/a` と `credential_configured` のみ返す。平文・マスク・末尾は返さない / ログに出さない
+- env が SoT のとき UI 入力は非表示、credential PUT/DELETE は **409**
+- Ollama は `credential_source=n/a` (API key 不要)
+
+### Codex OAuth の現状
+
+- **未配線 (unsupported)**: OAuth フロー・トークン保管・専用 base_url は実装していない
+- UI では選択不可として明示し、 Settings 起動時・ PUT `/llm/providers`・ factory のいずれも `auth_mode=codex_oauth` を拒否する
+- 将来実装するまでは API key 経路のみを正式サポートとする
 
 ### デフォルト初期値(推奨設定)
 
-- **MVP 初期**: `openai` + `api_key`(月 ¥30〜¥200 程度、ToS クリア、シンプル)
-- 動作確認後、コスト削減したくなれば: `openai` + `codex_oauth`(personal use 範囲を確認した上で)
-- 完全コスト 0 にしたければ: `ollama`(品質トレードオフあり)
+- **clean install 既定 (001 seed / Settings / `.env.example`)**: `ollama` + `api_key` + `qwen2.5:3b`
+- **005 マイグレーション**: 既存 DB で `llm_model` 未設定時のみ `qwen2.5:3b` を挿入 (既存行は保持)
+- **006 マイグレーション**: 先に `codex_oauth` → `api_key` を正規化し、その後 001 `openai` + 005 `qwen2.5:3b` + `api_key` の三重一致のみ `ollama` へ修復。 よって `openai + qwen2.5:3b + codex_oauth` も最終的に `ollama + qwen2.5:3b + api_key` になる。 意図的な選択 (例: openai + gpt-4.1) は audit 有無に関わらず上書きしない
+- **現行ローカル推奨**: `ollama` + 軽量モデル (`qwen2.5:3b` 等)。 API コスト 0 で動作確認
+- クラウド利用時: `openai` / `anthropic` + `api_key`(ToS クリア)
+- Codex OAuth は上記の通り未配線のため選択しない (Settings 起動拒否 / PUT 422 / factory fatal)
 
 ## 結果
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+from pydantic import SecretStr
 
 from ymg_backend.core.config import Settings
 from ymg_backend.infrastructure.gpu_worker_client import GpuWorkerClient
@@ -48,7 +49,11 @@ def _settings(base_url: str) -> Settings:
     他フィールドは既定値。 production では env ``GPU_WORKER_BASE_URL`` がこの値を供給する
     (config.py:79)。 ここでは切替対象を 1 点に絞るため kwargs で直接指定する。
     """
-    return Settings(gpu_worker_base_url=base_url)
+    return Settings(
+        gpu_worker_base_url=base_url,
+        admin_password=SecretStr("test-admin-password"),
+        _env_file=None,
+    )
 
 
 def _register_health(router: respx.MockRouter, base_url: str, worker_version: str) -> respx.Route:
@@ -133,7 +138,10 @@ async def test_base_url_flows_from_env_via_settings(
     ``Settings`` は ``.env`` も読むため、 ``_env_file=None`` でファイルを無効化し env のみを源にする。
     """
     monkeypatch.setenv("GPU_WORKER_BASE_URL", _BASE_URL_B)
-    settings = Settings(_env_file=None)
+    settings = Settings(
+        admin_password=SecretStr("test-admin-password"),
+        _env_file=None,
+    )
     assert settings.gpu_worker_base_url == _BASE_URL_B
 
     with respx.mock(assert_all_called=False) as router:

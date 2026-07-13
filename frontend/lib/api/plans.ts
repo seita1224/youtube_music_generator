@@ -2,8 +2,6 @@
 //
 // 型は schema.ts 生成(`npm run gen:api`)には依存せず、 contract schema に
 // 手書きで一致させる(health.ts / scheduler.ts / dryrun.ts と同方針)。
-// 一覧(cycle / status フィルタ)と承認のみを扱う。 生成 endpoint(POST /plans)は
-// US3 frontend の担当外のため雛形に含めない。
 
 import { apiGet, apiPost } from "@/lib/api/client";
 
@@ -13,6 +11,7 @@ export type PlanStatus =
   | "generated"
   | "approved"
   | "executing"
+  | "music_generated"
   | "completed"
   | "failed";
 
@@ -39,6 +38,13 @@ export interface PlanListResponse {
   readonly total: number;
 }
 
+/** POST /plans の body。 weekly は backend 未対応のため UI は daily のみ送る。 */
+export interface GeneratePlanRequest {
+  readonly cycle: PlanCycle;
+  readonly target_date: string; // YYYY-MM-DD
+  readonly force_regenerate?: boolean;
+}
+
 /** プラン一覧を取得する。 cycle(daily/weekly)/ status でフィルタ可能。 */
 export async function listPlans(
   cycle?: PlanCycle,
@@ -55,7 +61,17 @@ export async function listPlans(
   return apiGet<PlanListResponse>(`/plans${query ? `?${query}` : ""}`);
 }
 
-/** generated のプランを承認する(status→approved、 daily サイクル実行を解錠)。 */
+/** improvement-plan LLM で新規 Plan を生成する(POST /plans → 201)。 */
+export async function generatePlan(body: GeneratePlanRequest): Promise<Plan> {
+  return apiPost<Plan>("/plans", body);
+}
+
+/** 単一 Plan を取得する(詳細画面用)。 */
+export async function getPlan(id: string): Promise<Plan> {
+  return apiGet<Plan>(`/plans/${id}`);
+}
+
+/** generated のプランを承認する(status→approved、 音楽生成実行を解錠)。 */
 export async function approvePlan(id: string): Promise<Plan> {
   return apiPost<Plan>(`/plans/${id}/approve`);
 }

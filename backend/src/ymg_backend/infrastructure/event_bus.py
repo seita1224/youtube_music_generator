@@ -53,7 +53,7 @@ class JobEvent:
     """ISO8601 (JST, ``+09:00``)。 空文字で渡すと :meth:`EventBus.publish` が補完する。"""
 
     job_name: str
-    """ジョブ名 (例 ``"daily_cycle"``)。 ``JobHistory.job_name`` と同語彙。"""
+    """ジョブ名 (例 ``"music_generation"`` / ``"daily_cycle"``)。 ``JobHistory.job_name`` と同語彙。"""
 
     step: str
     """進捗軸。 grid 行キー (``cycle`` / ``post`` / ``music`` / ``acoustid`` / ``image`` /
@@ -61,6 +61,9 @@ class JobEvent:
 
     status: JobStatus
     """``running`` | ``succeeded`` | ``failed`` の 3 値のみ (contract enum 準拠)。"""
+
+    run_id: str | None = None
+    """``job_history.id`` (API ``run_id``)。 音楽生成進捗では設定する。 旧経路は ``None``。"""
 
     genre: str | None = None
     """grid 列キー。 post 単位 step のみ非 ``None`` (``cycle`` step は ``None``)。"""

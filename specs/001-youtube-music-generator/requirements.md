@@ -97,7 +97,7 @@
 
 - バックエンド: **Python**(uv 管理[ADR-0014]、FastAPI[ADR-0009]、APScheduler[ADR-0011]、SQLAlchemy + Alembic、google-api-python-client、slack_sdk、pyacoustid、PyTorch 系、loguru[ADR-0023])
 - フロントエンド: **Next.js (App Router)**(shadcn/ui、tanstack/query、recharts)
-- 認証: バックエンド `Basic 認証`(LAN 内、ADR-0013)、OAuth2 トークンは PostgreSQL に対称鍵暗号化保存(ADR-0012)
+- 認証: frontend セッション cookie + backend `Basic 認証`(LAN 内、ADR-0013)。OAuth2 トークンは PostgreSQL に対称鍵暗号化保存(ADR-0012)
 - 型整合: OpenAPI スキーマ生成 + `openapi-typescript` で TS 型を自動生成
 - DB: **PostgreSQL**(+ pgvector 拡張余地、ADR-0010)
 - ストレージ: **fsspec** 抽象化で `file:// / s3:// / gs://` を切替(ADR-0022)
@@ -215,7 +215,7 @@
 - YouTube OAuth2 + リフレッシュトークン: PostgreSQL に **`Fernet` 対称鍵暗号化** で保存、鍵は環境変数
 - OAuth スコープ: `youtube.upload` + `youtube` + `yt-analytics.readonly`(ADR-0021)
 - AI 生成コンテンツの開示フラグ: `status.containsSyntheticMedia=true` を全投稿で設定(ADR-0020)
-- 管理UI: Basic 認証(LAN 内、`.env` で資格情報管理)
+- 管理UI: `/login` + セッション cookie(LAN 内、`.env` で資格情報管理。`NEXT_PUBLIC_*` に資格情報を置かない)
 
 ### 7.5 バックアップ(ADR-0026)
 
@@ -327,7 +327,7 @@
 | ID | タイトル | Status |
 |----|---------|--------|
 | [0012](adr/0012-oauth-token-encrypted-in-postgres.md) | OAuth トークン = PostgreSQL に対称鍵暗号化保存 | Accepted |
-| [0013](adr/0013-admin-ui-auth-basic.md) | 管理UI 認証 = Basic 認証(LAN 内)| Accepted |
+| [0013](adr/0013-admin-ui-auth-basic.md) | 管理UI 認証 = frontend セッション + backend Basic(LAN 内)| Accepted |
 
 ### 運用・観測性
 

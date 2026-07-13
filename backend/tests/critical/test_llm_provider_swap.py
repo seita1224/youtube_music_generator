@@ -31,11 +31,15 @@ from ymg_backend.llm.base import LlmError
 from ymg_backend.llm.factory import (
     _ANTHROPIC_ALLOWED_AUTH_MODE,
     _KEY_LLM_AUTH_MODE,
+    _KEY_LLM_MODEL,
     _KEY_LLM_PROVIDER,
     ProviderConfig,
+    _build_openai,
+    _resolve_cloud_api_key,
     app_state_table,
     create_llm_provider,
     resolve_provider_config,
+    validate_model_for_provider,
 )
 from ymg_backend.llm.ollama_provider import OllamaProvider
 from ymg_backend.llm.openai_provider import OpenAIProvider
@@ -85,12 +89,16 @@ class _FakeSession:
 def _settings(**overrides: Any) -> Settings:
     """env を無視して dummy 秘密値で固めた :class:`Settings`(provider 構築可)。
 
-    既定 env は openai/api_key。 切替検証はもっぱら app_state 上書きで行うため、
-    Settings 側はキー存在のみ満たす。
+    既定は openai/api_key(切替の対照)。 切替検証はもっぱら app_state 上書きで行う。
+    ローカル ``.env`` の ``LLM_PROVIDER`` に依存しないよう provider/auth を明示する。
     """
     base: dict[str, Any] = {
+        "llm_provider": "openai",
+        "llm_auth_mode": "api_key",
         "openai_api_key": "sk-test",
         "anthropic_api_key": "ak-test",
+        "admin_password": "test-admin-password",
+        "_env_file": None,
     }
     base.update(overrides)
     return Settings(**base)
@@ -108,10 +116,105 @@ async def test_resolve_uses_env_when_no_app_state_override() -> None:
     assert cfg.model == "gpt-4.1"  # _DEFAULT_MODELS[openai]
 
 
+async def test_app_state_llm_model_overrides_default() -> None:
+    """app_state.llm_model が provider 対応モデルなら factory がそれを採用する。"""
+    session = _FakeSession(
+        {
+            _KEY_LLM_PROVIDER: '"ollama"',
+            _KEY_LLM_AUTH_MODE: '"api_key"',
+            _KEY_LLM_MODEL: '"llama3.2:3b"',
+        }
+    )
+
+    cfg = await resolve_provider_config(_settings(), session=session)  # type: ignore[arg-type]
+
+    assert cfg.provider == "ollama"
+    assert cfg.model == "llama3.2:3b"
+
+
+async def test_app_state_invalid_llm_model_raises_fatal() -> None:
+    """他 provider の model が永続化されている場合は silent fallback せず fatal。"""
+    session = _FakeSession(
+        {
+            _KEY_LLM_PROVIDER: '"ollama"',
+            _KEY_LLM_MODEL: '"gpt-4.1"',
+        }
+    )
+
+    with pytest.raises(LlmError) as exc_info:
+        await resolve_provider_config(_settings(), session=session)  # type: ignore[arg-type]
+
+    assert exc_info.value.category == "fatal"
+    assert "gpt-4.1" in exc_info.value.message
+
+
+async def test_app_state_invalid_llm_model_persisted_for_get() -> None:
+    """GET active 向け strict_model=False では永続 model をそのまま返す。"""
+    session = _FakeSession(
+        {
+            _KEY_LLM_PROVIDER: '"ollama"',
+            _KEY_LLM_MODEL: '"gpt-4.1"',
+        }
+    )
+
+    cfg = await resolve_provider_config(
+        _settings(),
+        session=session,  # type: ignore[arg-type]
+        strict_model=False,
+    )
+
+    assert cfg.provider == "ollama"
+    assert cfg.model == "gpt-4.1"
+
+
+def test_validate_model_for_provider_raises_on_mismatch() -> None:
+    """validate_model_for_provider は不整合 model を fatal で拒否する。"""
+    with pytest.raises(LlmError) as exc_info:
+        validate_model_for_provider("ollama", "gpt-4.1")
+
+    assert exc_info.value.category == "fatal"
+
+
+async def test_resolve_provider_config_rejects_codex_oauth_in_app_state() -> None:
+    """app_state の codex_oauth は resolve 段階で fatal。"""
+    session = _FakeSession({_KEY_LLM_AUTH_MODE: '"codex_oauth"'})
+
+    with pytest.raises(LlmError) as exc_info:
+        await resolve_provider_config(_settings(), session=session)  # type: ignore[arg-type]
+
+    assert "codex_oauth" in exc_info.value.message
+
+
+async def test_build_openai_rejects_codex_oauth_config() -> None:
+    """_build_openai も codex_oauth を拒否する (二重防御)。"""
+    config = ProviderConfig(provider="openai", auth_mode="codex_oauth", model="gpt-4.1")
+
+    with pytest.raises(LlmError):
+        await _build_openai(_settings(), config, session=None)
+
+
+async def test_resolve_cloud_api_key_rejects_non_cloud_provider() -> None:
+    """cloud key 解決は openai/anthropic 以外を拒否する。"""
+    with pytest.raises(LlmError) as exc_info:
+        await _resolve_cloud_api_key(_settings(), "ollama", session=None)  # type: ignore[arg-type]
+
+    assert "openai/anthropic" in exc_info.value.message
+
+
+async def test_resolve_cloud_api_key_missing_key_is_fatal() -> None:
+    """API key 未設定時は fatal。"""
+    settings = _settings(openai_api_key="", anthropic_api_key="")
+
+    with pytest.raises(LlmError) as exc_info:
+        await _resolve_cloud_api_key(settings, "openai", session=None)
+
+    assert exc_info.value.category == "fatal"
+    assert "credential_source=none" in exc_info.value.message
+
+
 async def test_app_state_swaps_active_provider_to_anthropic() -> None:
     """app_state(JSON literal)で openai → anthropic に切替わり、 既定 model も追従する。"""
     session = _FakeSession(
-        # seed と同形式: JSONB literal 文字列。factory が一段 json.loads する。
         {_KEY_LLM_PROVIDER: '"anthropic"', _KEY_LLM_AUTH_MODE: '"api_key"'}
     )
 
@@ -211,12 +314,17 @@ def test_put_combo_validation_rejects_anthropic_non_api_key(bad_auth: str) -> No
 
 @pytest.mark.parametrize(
     ("provider", "auth_mode"),
-    [("openai", "codex_oauth"), ("openai", "api_key"), ("ollama", "api_key")],
+    [("openai", "api_key"), ("ollama", "api_key")],
 )
-def test_put_combo_validation_allows_non_anthropic_combos(provider: str, auth_mode: str) -> None:
-    """anthropic 以外、 もしくは anthropic+api_key は組合せ検証を通過する(対照)。"""
+def test_put_combo_validation_allows_supported_combos(provider: str, auth_mode: str) -> None:
+    """api_key 組合せは anthropic 以外でも通過する(対照)。 codex_oauth は API 層で 422。"""
     is_rejected = provider == "anthropic" and auth_mode != _ANTHROPIC_ALLOWED_AUTH_MODE
     assert is_rejected is False
+
+
+def test_put_combo_validation_notes_codex_oauth_unsupported() -> None:
+    """Codex OAuth は factory でも fatal、 PUT は 422 (未配線)。"""
+    assert _ANTHROPIC_ALLOWED_AUTH_MODE != "codex_oauth"
 
 
 # ===========================================================================
@@ -236,15 +344,12 @@ async def test_app_state_unknown_provider_is_rejected() -> None:
 # 5. PUT 書込側の前提: app_state Core Table の形(2 キー upsert 対象)を固定
 # ===========================================================================
 def test_app_state_table_exposes_swap_keys_for_put_upsert() -> None:
-    """PUT が upsert する Core Table が key/value 列を持つ(内部契約 (b) の前提固定)。
-
-    PUT は ``insert(app_state_table).values(key=..., value=...)`` を 2 回行うため、
-    factory が公開する Table と切替キー定数の整合をテストで保証しておく。
-    """
+    """PUT が upsert する Core Table が key/value 列を持つ。"""
     assert app_state_table.name == "app_state"
     assert {"key", "value"} <= set(app_state_table.c.keys())
     assert _KEY_LLM_PROVIDER == "llm_provider"
     assert _KEY_LLM_AUTH_MODE == "llm_auth_mode"
+    assert _KEY_LLM_MODEL == "llm_model"
 
 
 def test_provider_config_uses_slots() -> None:

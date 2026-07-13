@@ -716,8 +716,9 @@ def _seed_app_state() -> None:
     """
     rows = (
         ("scheduler_enabled", "false"),  # ADR-0031: reboot 後は手動 enable
-        ("llm_provider", '"openai"'),  # ADR-0019
+        ("llm_provider", '"ollama"'),  # ADR-0019: clean install 既定
         ("llm_auth_mode", '"api_key"'),
+        ("llm_model", '"qwen2.5:3b"'),  # ADR-0019: ollama 既定モデル
         ("monthly_budget_usd", "50"),  # ADR-0024
         ("dryrun_enabled", "true"),  # 初期は dryrun 推奨
     )

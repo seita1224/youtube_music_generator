@@ -44,16 +44,20 @@ services:
     build:
       context: ./frontend
       args:
-        # Basic 認証クレデンシャルをビルド時に注入(NEXT_PUBLIC_* はバンドルにインライン化)。
-        # LAN 単一ユーザー前提(ADR-0013)。 .env の ADMIN_* を流用。
-        NEXT_PUBLIC_BASIC_AUTH_USER: ${ADMIN_USERNAME:-admin}
-        NEXT_PUBLIC_BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
-        # rewrites() のプロキシ先(ビルド時に manifest へ焼き込まれる)。
+        # BFF のビルド時フォールバック。 実接続先は runtime env を優先。
         BACKEND_BASE_URL: http://backend:8000
     restart: unless-stopped
+    # `.env` を wholesale で渡さない(FERNET_KEY / DB / LLM / YouTube 等を frontend に入れない)。
+    # 明示 allowlist のみ。
     environment:
-      # frontend → backend は内部ネットワーク経由
+      # frontend → backend は内部ネットワーク経由(BFF がサーバ側で Basic 注入)
       BACKEND_BASE_URL: http://backend:8000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?set AUTH_SESSION_SECRET in .env}
+      # LAN HTTP 前提。 HTTPS 終端時は true に変更。
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      NODE_ENV: production
     depends_on:
       - backend
     ports:

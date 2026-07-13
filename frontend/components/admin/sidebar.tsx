@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
+import { LogoutButton } from "@/components/admin/logout-button";
 import {
   PRIMARY_NAV_ITEMS,
   SECONDARY_NAV_ITEMS,
@@ -67,7 +68,13 @@ function NavLink({ item, active }: NavLinkProps): React.JSX.Element {
   );
 }
 
-export function Sidebar(): React.JSX.Element {
+interface SidebarProps {
+  readonly username?: string;
+}
+
+export function Sidebar({
+  username = "admin",
+}: SidebarProps): React.JSX.Element {
   const pathname = usePathname();
 
   return (
@@ -92,14 +99,13 @@ export function Sidebar(): React.JSX.Element {
 
       <div className="border-t border-white/10 px-5 py-4">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-300">admin</span>
-          <a
-            href="/api/backend/logout"
-            className="text-slate-400 hover:text-danger"
-            title="Basic 認証セッションを破棄(ベストエフォート)"
-          >
-            ログアウト
-          </a>
+          <span className="text-slate-300" data-testid="sidebar-username">
+            {username}
+          </span>
+          <LogoutButton
+            className="text-slate-400 hover:text-danger disabled:opacity-50"
+            testId="sidebar-logout"
+          />
         </div>
       </div>
     </aside>

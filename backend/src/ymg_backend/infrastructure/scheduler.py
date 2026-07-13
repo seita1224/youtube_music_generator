@@ -2,22 +2,18 @@
 
 責務:
 
-1. **日次 cron 登録** (ADR-0011): JST の 2 slot (朝 / 夕) に日次サイクルを起動する
-   ``cron`` ジョブを :class:`~apscheduler.schedulers.asyncio.AsyncIOScheduler` に登録する。
-   各 slot のジョブは :func:`run_daily_cycle` を呼び、 その日の :class:`DailyPlan` を
-   1 投稿ずつ処理する。 加えて週次改善計画 (月曜朝、 ADR-0032) と analytics 取得
-   (日次 23:00、 ADR-0021) の cron も同パターンで登録する (T108)。 週次は投稿サイクルの
-   一部なので enabled ゲート (:meth:`SchedulerService.enable`) に従うが、 analytics 取得は
-   観測であり投稿ではないため ``scheduler_enabled`` に依らず常時走らせてよい (ADR-0035)。
+1. **日次 cron 登録** (ADR-0011): JST の 2 slot (朝 / 夕) に音楽生成
+   (``music_generation``) を起動する ``cron`` ジョブを登録する。 各 slot は注入された
+   ``CycleRunner`` (= :meth:`MusicRunService.run_cron`) を呼び、 当日の承認済み Plan を
+   解決して実行する (無ければ skipped、 重複なら起動しない)。 加えて週次改善計画
+   (月曜朝、 ADR-0032) と analytics 取得 (日次 23:00、 ADR-0021) の cron も同パターンで
+   登録する (T108)。 analytics は観測のため ``scheduler_enabled`` に依らず常時走らせてよい
+   (ADR-0035)。
 2. **enabled ゲート** (ADR-0031): ジョブの ``add`` は ``app_state.scheduler_enabled=true``
-   のときだけ行う。 reboot 後は false 起動が既定 (``main.py`` の lifespan は
-   instance 構築のみで job 登録しない)。 管理 UI の ``PUT /scheduler`` が本サービスの
+   のときだけ行う。 reboot 後は false 起動が既定。 管理 UI の ``PUT /scheduler`` が
    :meth:`SchedulerService.enable` / :meth:`SchedulerService.disable` を呼んで切替える。
-3. **疎結合な実行本体** (ADR-0011): 実際のサイクル実行は :class:`DailyCycleOrchestrator`
-   が担うが、 その合成には他チームの多数の依存 (planner / music / uploader …) が要る。
-   本モジュールは「いつ起動するか」だけに責務を絞り、 実行本体は注入された
-   ``CycleRunner`` (= :data:`run_daily_cycle` 互換の async callable) として受け取る。
-   これにより scheduler 単体で外部依存を起動せずテストできる。
+3. **疎結合な実行本体** (ADR-0011): 本モジュールは「いつ起動するか」だけに責務を絞り、
+   実行本体は注入された ``CycleRunner`` として受け取る。
 
 設計方針:
 
@@ -26,9 +22,9 @@
   を持たない)。
 - ジョブ ID は slot ごとに安定した文字列定数 (``daily-cycle:morning`` 等) を使い、
   ``replace_existing=True`` で再登録を冪等にする。
-- ジョブ本体 (:func:`_run_slot`) は自前で :class:`AsyncSession` を開く
-  (``get_sessionmaker()()``)。 cron 起動は HTTP リクエスト外のため ``Depends`` は使えず、
-  オーケストレータと同じ「ルート外はセッションメーカ直叩き」パターンに従う。
+- ジョブ本体 (:func:`_run_slot`) は ``CycleRunner`` を呼ぶだけ。 DB セッションは実行本体
+  (:meth:`MusicRunService.run_cron` 等) が予約用の短い TX と実行用に分けて開く。
+  cron 起動は HTTP リクエスト外のため ``Depends`` は使えない。
 - ジョブ内例外は ADR-0028 の 5 区分で分類し Slack 通知して握り潰す (1 回の失敗で
   scheduler スレッドを落とさない)。 通知は副作用なので失敗しても本筋を止めない。
 """
@@ -50,11 +46,9 @@ from ymg_backend.domain.dryrun.retention_job import (
     build_retention_runner,
 )
 from ymg_backend.domain.errors.errors import SchedulerHaltError, resolve_category
-from ymg_backend.infrastructure.db.session import get_sessionmaker
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from ymg_backend.infrastructure.slack.notifier import SlackNotifier
 
@@ -104,14 +98,14 @@ _ANALYTICS_HOUR: Final[int] = 23
 
 
 class CycleRunner(Protocol):
-    """日次サイクル実行本体の最小 I/F (注入される async callable)。
+    """日次スロット実行本体の最小 I/F (注入される async callable)。
 
-    本番では :class:`DailyCycleOrchestrator.run` 互換のラッパ (``run_daily_cycle``) を
-    渡す。 テストでは呼び出しを記録するだけの stub を渡す。 ``target_date`` のみ受け、
-    ``session`` 等の重い依存は実行本体側で解決する (scheduler は起動契機だけを持つ)。
+    本番では :meth:`MusicRunService.run_cron` 互換のラッパを渡す。 テストでは呼び出しを
+    記録するだけの stub を渡す。 ``target_date`` を受け、 承認 Plan 解決・ JobHistory
+    予約・セッション寿命は実行本体側の責務 (scheduler は起動契機だけを持つ)。
     """
 
-    async def __call__(self, *, session: AsyncSession, target_date: date) -> None: ...
+    async def __call__(self, *, target_date: date) -> None: ...
 
 
 class WeeklyPlanRunner(Protocol):
@@ -330,12 +324,11 @@ class SchedulerService:
         )
 
     async def _run_slot(self, *, slot: str) -> None:
-        """cron 発火時のジョブ本体。 当日分の日次サイクルを 1 回実行する。
+        """cron 発火時のジョブ本体。 当日分の音楽生成を 1 回実行する。
 
-        cron 起動は HTTP リクエスト外のため ``Depends`` は使えない。 オーケストレータと同じ
-        「ルート外はセッションメーカ直叩き」パターンで自前 ``AsyncSession`` を開く。
-        ジョブ内例外は ADR-0028 の 5 区分で分類し Slack 通知して握り潰す (scheduler を
-        落とさない)。 通知は副作用なので失敗しても本筋を止めない。
+        DB セッションは ``CycleRunner`` (``MusicRunService.run_cron``) 側が予約用と実行用に
+        分けて開く。 ジョブ内例外は ADR-0028 の 5 区分で分類し Slack 通知して握り潰す
+        (scheduler を落とさない)。 通知は副作用なので失敗しても本筋を止めない。
 
         Args:
             slot: 発火 slot 名 (``morning`` / ``evening``)。 ログ context 用。
@@ -344,21 +337,19 @@ class SchedulerService:
         log = bind_context(
             step="scheduler.daily_cycle", cycle_id=f"{target_date.isoformat()}:{slot}"
         )
-        log.info("daily-cycle job fired", slot=slot, target_date=target_date.isoformat())
-        sessionmaker = get_sessionmaker()
+        log.info("music-generation cron fired", slot=slot, target_date=target_date.isoformat())
         try:
-            async with sessionmaker() as session:
-                await self._cycle_runner(session=session, target_date=target_date)
+            await self._cycle_runner(target_date=target_date)
         except SchedulerHaltError as exc:  # FR-113: インフラ級 fatal は scheduler を自動停止
             log.bind(error_category=exc.category.value).error(
-                "daily-cycle job halted scheduler", slot=slot, error=str(exc)
+                "music-generation cron halted scheduler", slot=slot, error=str(exc)
             )
             await self._notify_failure(exc, slot=slot, target_date=target_date)
             self.disable()
         except Exception as exc:  # 1 回の失敗で scheduler スレッドを落とさない (ADR-0028)
             category = resolve_category(exc)
             log.bind(error_category=category.value).error(
-                "daily-cycle job failed", slot=slot, error=str(exc)
+                "music-generation cron failed", slot=slot, error=str(exc)
             )
             await self._notify_failure(exc, slot=slot, target_date=target_date)
 

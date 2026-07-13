@@ -1,6 +1,6 @@
 # ADR インデックス
 
-YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (ADR-0001〜0035)。
+YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (ADR-0001〜0038)。
 新規 ADR を追加したら本インデックスにも 1 行追記する。テンプレートは
 [0000-template.md](0000-template.md)。
 
@@ -22,6 +22,7 @@ YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (A
 - [ADR-0024](0024-llm-cost-and-usage-tracking.md) — LLM コスト・トークン使用量管理
 - [ADR-0032](0032-improvement-plan-llm-schema.md) — 改善計画 LLM の出力スキーマ
 - [ADR-0033](0033-initial-genres-and-planner-prompt.md) — 初期ジャンル候補と改善計画 LLM のプロンプト構造
+- [ADR-0037](0037-llm-mismatch-repair.md) — LLM provider/model 不整合の GET 公開と PUT 修復
 
 ## コンテンツ生成・動画
 
@@ -34,24 +35,26 @@ YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (A
 ## サイクル・運用フロー
 
 - [ADR-0004](0004-posting-volume-staged-from-1-2-per-day.md) — 投稿規模は 1日1〜2本 から段階的に拡大
-- [ADR-0006](0006-cycle-structure-daily-and-weekly.md) — サイクル構造 = 日次サイクル + 週次サイクル の2層
+- [ADR-0006](0006-cycle-structure-daily-and-weekly.md) — サイクル構造 = 日次 + 週次 + 音楽専用実行モード
 - [ADR-0007](0007-dryrun-mode-as-mvp-requirement.md) — dryrun モードを MVP 必須機能に含める
 - [ADR-0025](0025-dryrun-lifecycle-state-based.md) — dryrun ライフサイクル = 状態別 retention(承認 / 否認 / 無反応)
 - [ADR-0035](0035-staged-rollout-dryrun-default.md) — MVP は全機能実装 + dryrun=ON 既定で段階移行する
-- [ADR-0011](0011-scheduler-apscheduler-in-backend-process.md) — スケジューラ = APScheduler(バックエンド常駐プロセス内)
+- [ADR-0036](0036-job-history-trigger-text-check.md) — job_history.trigger は TEXT+CHECK (NULL 可)、ENUM は作らない
+- [ADR-0011](0011-scheduler-apscheduler-in-backend-process.md) — スケジューラ = APScheduler(承認 Plan・single-flight)
 
 ## コンプライアンス・セキュリティ
 
 - [ADR-0005](0005-content-id-pre-check-with-acoustid.md) — Content ID 事前チェック = AcoustID + Chromaprint
 - [ADR-0012](0012-oauth-token-encrypted-in-postgres.md) — OAuth2 リフレッシュトークン = PostgreSQL に対称鍵暗号化で保存
-- [ADR-0013](0013-admin-ui-auth-basic.md) — 管理UI 認証 = Basic 認証(LAN 内アクセス前提)
+- [ADR-0013](0013-admin-ui-auth-basic.md) — 管理UI 認証 = frontend セッション + backend Basic(LAN 内)
 - [ADR-0020](0020-ai-disclosure-via-contains-synthetic-media.md) — AI 開示フラグ = `status.containsSyntheticMedia=true`
 - [ADR-0026](0026-backup-local-secondary-disk.md) — バックアップ = ローカル別ディスクのみ(段階的アプローチ)
+- [ADR-0038](0038-validation-error-sensitive-input-redaction.md) — RequestValidationError の機密 `input` 除去
 
 ## アナリティクス・観測性・品質
 
 - [ADR-0021](0021-analytics-data-api-and-analytics-api.md) — アナリティクス取得 = YouTube Data API + YouTube Analytics API
-- [ADR-0023](0023-observability-structured-logging.md) — 観測性 = 構造化ログ(loguru)+ 管理UI 閲覧
+- [ADR-0023](0023-observability-structured-logging.md) — 観測性 = 構造化ログ + 実行進捗永続化(SSE)
 - [ADR-0027](0027-testing-strategy-emphasis-on-critical-paths.md) — テスト方針 = メリハリ型(クリティカルパス厳格、その他 best effort)
 - [ADR-0028](0028-error-categories-and-handling.md) — エラーカテゴリ分類と挙動
 

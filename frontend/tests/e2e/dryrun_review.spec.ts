@@ -1,37 +1,9 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
-// T092 e2e: dryrun レビュー画面の critical user flow (US2)。
-//
-// UI 契約 (Playwright と画面エージェント一致用) に厳密準拠する:
-//  - ルート: 一覧 /dryrun、詳細 /dryrun/[id]
-//  - data-testid: dryrun-card / dryrun-state-badge / dryrun-video /
-//    dryrun-approve-btn / dryrun-reject-btn / dryrun-reject-reason /
-//    dryrun-reject-confirm-btn
-//  - ボタン文言: 承認="承認して投稿" / 却下を開く="却下" / 却下確定="却下を確定"
-//  - 状態ラベル: pending=保留中 / approved=承認済 / rejected=却下 /
-//    auto_expired=期限切れ / posted=投稿済
-//  - 却下理由は min 4 文字・必須 (空送信はボタン無効 or バリデーションエラー)
-//
-// 第一はフルスタック前提のセレクタ検証。 ただし実 API が無くても落ちないよう、
-// バックエンド応答 (`/api/backend/dryrun/...`) と動画ストリームを page.route で
-// mock し、 ページ実装のセレクタ・文言・遷移・mutation を決定論的に検証する。
-//
-// Basic 認証 (ADR-0013, LAN 内) は test.use({ httpCredentials }) で付与する。
-// env からクレデンシャルを読み、 未設定時はデフォルト admin/admin にフォールバックする
-// (ローカル backend の既定。 ソースに秘密はハードコードしない)。
+import { loginViaApi } from "./helpers";
 
-// ---------------------------------------------------------------------------
-// Basic 認証クレデンシャル (env 優先。 ブラウザ Basic セッション再利用のため
-// httpCredentials を describe スコープで付与する)。
-// ---------------------------------------------------------------------------
-const BASIC_AUTH_USER =
-  process.env.E2E_BASIC_AUTH_USER ??
-  process.env.NEXT_PUBLIC_BASIC_AUTH_USER ??
-  "admin";
-const BASIC_AUTH_PASSWORD =
-  process.env.E2E_BASIC_AUTH_PASSWORD ??
-  process.env.NEXT_PUBLIC_BASIC_AUTH_PASSWORD ??
-  "admin";
+// T092 e2e: dryrun レビュー画面の critical user flow (US2)。
+// ADR-0013: loginViaApi でセッション cookie を付与。 backend は page.route でモック。
 
 // ---------------------------------------------------------------------------
 // mock データ (契約 schema に一致。 lib/api/dryrun.ts の型と整合)。
@@ -157,13 +129,8 @@ async function mockDryrunApi(
 }
 
 test.describe("[FR-061/FR-063] dryrun レビュー画面 (US2)", () => {
-  // LAN 内 Basic 認証セッションを付与 (ADR-0013)。 同一オリジン proxied パスの
-  // <video> もこのセッションを再利用する。
-  test.use({
-    httpCredentials: {
-      username: BASIC_AUTH_USER,
-      password: BASIC_AUTH_PASSWORD,
-    },
+  test.beforeEach(async ({ page }) => {
+    await loginViaApi(page);
   });
 
   test("一覧→詳細→承認: pending を承認して投稿済になる", async ({ page }) => {

@@ -1,4 +1,4 @@
-"""FastAPI app factory (T052, ADR-0009 / ADR-0013 / ADR-0031)。
+"""FastAPI app factory (T052, ADR-0009 / ADR-0013 / ADR-0031 / ADR-0038)。
 
 責務:
 
@@ -9,19 +9,22 @@
    :func:`~ymg_backend.core.security.require_basic_auth` を依存に持つ「認証付きルータ」
    配下にぶら下げる。 ``/health`` は認証不要 (backend-api.yaml ``security: []``) なので
    認証なしルータとして登録する。
-3. **lifespan** (ADR-0031): 起動時に
+3. **RequestValidationError の機密 input 除去** (ADR-0038): ``api_key`` 等の提出値が
+   422 応答・ログに平文エコーされないよう専用ハンドラを登録する。
+4. **lifespan** (ADR-0031): 起動時に
    - DB 接続を検証 (``SELECT 1``。 失敗は :class:`FatalError`、 DB 不可はサイクル停止)
-   - scheduler 起動準備 (instance 構築のみ。 ``add_job`` はしない)
-   - ``app_state.scheduler_enabled`` を確認 (reboot 後は **false 起動が既定**、 手動 enable)
+   - 孤立した ``running`` / ``executing`` / ``generating`` を failed に整合
+   - composition root で ``MusicRunService`` / ``SchedulerService`` を組み立て
+     ``app.state`` に注入する
+   - ``app_state.scheduler_enabled=true`` のときだけ ``SchedulerService.enable()``
+     (reboot 後は **false 起動が既定**、 手動 enable)
    shutdown 時に scheduler を停止し DB エンジンを破棄する。
 
 設計方針:
 
-- 副作用を持つ依存 (engine / scheduler) は ``app.state`` に保持し、 lifespan で
-  ライフサイクルを閉じる (不変オブジェクトのみモジュールレベルに置く)。
-- scheduler は ``app_state.scheduler_enabled=true`` のときのみ ``start()`` する。
-  job 登録 (日次 cron 等) は US1 の scheduler 実装 (T087) の責務で、 ここでは
-  「起動準備」までに留める (ADR-0031: false 起動が既定)。
+- 副作用を持つ依存 (engine / scheduler / orchestrator) は ``app.state`` に保持し、
+  lifespan でライフサイクルを閉じる (不変オブジェクトのみモジュールレベルに置く)。
+- scheduler の job 登録は ``SchedulerService.enable`` に委譲する (ADR-0031: false 起動が既定)。
 - ``app_state`` 参照は ORM 層 (T021) に依存せず、 ``api/health.py`` の Core Table を
   再利用して疎結合を保つ。
 """
@@ -55,8 +58,16 @@ from ymg_backend.api.sse import router as sse_router
 from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.logging import setup_logging
 from ymg_backend.core.security import require_basic_auth
+from ymg_backend.core.validation_errors import register_validation_exception_handler
 from ymg_backend.domain.errors.errors import FatalError
+from ymg_backend.infrastructure.composition import (
+    build_music_run_service,
+    build_scheduler_service,
+    make_music_cron_runner,
+)
+from ymg_backend.infrastructure.db.orphan_reconciliation import reconcile_orphaned_runs
 from ymg_backend.infrastructure.db.session import dispose_engine, get_sessionmaker
+from ymg_backend.infrastructure.slack.notifier import SlackNotifier
 
 _API_TITLE: Final[str] = "YMG Backend API"
 _API_VERSION: Final[str] = "1.0.0"
@@ -111,24 +122,37 @@ def _build_lifespan(settings: Settings) -> Lifespan[FastAPI]:
         setup_logging(level=settings.log_level)
         await _verify_db_connection()
 
-        # scheduler 起動準備: instance のみ構築。 job 登録は T087 の責務。
+        sessionmaker = get_sessionmaker()
+        # 再起動で残った in-flight 行を failed 確定し、 single-flight 枠を解放する。
+        async with sessionmaker() as session:
+            await reconcile_orphaned_runs(session)
+            await session.commit()
+
+        # scheduler instance + composition root (MusicRunService / CycleRunner)。
         scheduler = _build_scheduler()
         app.state.scheduler = scheduler
-        # NOTE: ``SchedulerService`` (job 出し入れ) の注入は別途の合成ルート (composition
-        # root) タスクが担う。 ``DailyCycleOrchestrator`` の組み立てに planner/music/
-        # uploader 等 10 サービスの構築を要し、 本配線タスク (router include) の範囲外。
-        # 未注入でも ``PUT /scheduler`` は ``getattr(app.state, "scheduler_service", None)``
-        # で best-effort に degrade する (フラグ永続化 + audit は実行、 job 操作のみ skip)。
-        # 注入時は ``app.state.scheduler_service = SchedulerService(scheduler, cycle_runner=…)``。
 
-        # ADR-0031: reboot 後は false 起動が既定。 enabled のときだけ start する。
+        music_run_service = build_music_run_service(settings, session_factory=sessionmaker)
+        cycle_runner = make_music_cron_runner(music_run_service)
+        notifier = SlackNotifier(settings.slack_webhook_url)
+        scheduler_service = build_scheduler_service(
+            scheduler, cycle_runner=cycle_runner, notifier=notifier
+        )
+        app.state.scheduler_service = scheduler_service
+        app.state.music_run_service = music_run_service
+        app.state.cycle_runner = cycle_runner
+        logger.bind(component="lifespan").info("scheduler_service wired (music_generation)")
+
+        # ADR-0031: reboot 後は false 起動が既定。 enabled のときだけ job 登録 + start。
         scheduler_enabled = await _read_scheduler_enabled()
         if scheduler_enabled:
-            scheduler.start()
-            logger.bind(component="lifespan").info("scheduler started (scheduler_enabled=true)")
+            scheduler_service.enable()
+            logger.bind(component="lifespan").info(
+                "scheduler enabled (scheduler_enabled=true, jobs registered)"
+            )
         else:
             logger.bind(component="lifespan").info(
-                "scheduler not started (scheduler_enabled=false, ADR-0031)"
+                "scheduler_service ready but not enabled (scheduler_enabled=false, ADR-0031)"
             )
 
         try:
@@ -156,11 +180,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     resolved = settings if settings is not None else get_settings()
 
+    # /docs / redoc / openapi.json は公開しない(LAN でもスキーマ列挙を避ける)。
+    # 契約スキーマは specs/.../contracts/backend-api.yaml を正とする。
     app = FastAPI(
         title=_API_TITLE,
         version=_API_VERSION,
         lifespan=_build_lifespan(resolved),
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
+
+    # ADR-0038: RequestValidationError の機密 input (api_key 等) を応答・ログから除去。
+    register_validation_exception_handler(app)
 
     # /health は認証不要 (backend-api.yaml security: [])。
     app.include_router(health_router)

@@ -7,7 +7,7 @@
 ### 対象 / 前提
 
 - **単一ユーザー(seita)前提**(spec.md Assumptions)。 admin ロール分離やマルチユーザー UI 要素は禁止
-- **LAN 内 Basic 認証**(ADR-0013)。 ヘッダー右上は「admin」固定表示 + ログアウトボタン
+- **LAN 内セッション認証**(ADR-0013)。 `/login` で認証し、ヘッダー右上は認証済みユーザー名表示 + ログアウトボタン
 - **デザインシステム**: Synthetix Vibe(Neon-Noir / Glassmorphism / Electric Purple + Pulse Red / Inter + Geist mono / Deep-space dark)
 - **言語**: UI ラベルは日本語(技術識別子・モデル名・ジャンル英名は英語維持)
 - **解像度**: デスクトップ 1280-2560 幅、 mobile 対応は範囲外
@@ -16,6 +16,7 @@
 
 | # | 画面 | path | 対応 User Story |
 | --- | --- | --- | --- |
+| — | ログイン | `/login` | 認証(ADR-0013) |
 | 1 | ダッシュボード | `/` | 横断的(全 US の概況) |
 | 2 | プラン一覧 | `/plans` | US1, US3 |
 | 3 | プラン詳細 | `/plans/[id]` | US1, US3 |
@@ -68,9 +69,10 @@
 
 ### 認証 / セッション関連
 
-- ログイン UI は不要(Basic 認証は HTTP ヘッダーで完結)
-- セッション失効時は backend が 401 返却 → frontend は full reload
+- ログイン画面: `/login`(ユーザー名 + パスワード)。 成功時に HttpOnly セッション cookie を発行
+- セッション失効時は middleware が `/login` へリダイレクト(API は 401)
 - 「Active Session」「ACTIVE SESSION」等の表示は不要
+- ログアウト: ヘッダー/サイドバーのボタンが `POST /api/auth/logout`(CSRF 付き)で cookie 破棄 → `/login` へ遷移
 
 ### 仕様外要素(全画面共通で禁止)
 
@@ -95,7 +97,7 @@
   - 月予算(円形プログレス `$使用 / $予算`、 50/80/100% 閾値ドット)
   - GPU ワーカー(ステータスドット + VRAM 使用率バー + ロード済モデル pills)
 - 中段 2 カラム:
-  - 「直近のジョブ」リスト 5 件(ジャンルカラーチップ + ステップ名(日本語: 楽曲生成 / AcoustID 検査 / 画像生成 / 動画合成 / アップロード)+ 状態 + 経過時間)
+  - 「直近のジョブ」リスト 5 件(`GET /jobs/runs` 由来: trigger / 対象日 / 状態 / 経過。詳細は `/jobs?run_id=...`)
   - 「直近の投稿」グリッド 4 件(サムネ + 日本語サブタイト + ジャンル英名バッジ + retention% + 経過時間)
 - 下段 MVP 完了状況の **小さなインジケーター**(`x / 6 完了` のサマリのみ)→ 詳細は `/mvp-check`(本仕様外、 内部 endpoint)に遷移
 
@@ -114,24 +116,25 @@
 
 - ヘッダーボタン: 「+ プランを生成」(Electric Purple 塗り)
 - フィルタータブ: 「全て / 日次 / 週次」
-- ステータス chip フィルター: `生成済 / 承認済 / 実行中 / 完了 / 失敗`
+- ステータス chip フィルター: `生成済 / 承認済 / 実行中 / 音楽生成済 / 完了 / 失敗`
 - 検索ボックス: 「プラン ID やジャンルで検索」
 - プランカード(縦並びリスト):
   - 左に cycle ラベル `日次` / `週次` + 対象日
   - 中央にタイトル(`ジャンル × サブタイト` 概要)+ rationale 1 行抜粋
   - 右に model 名 + cost + アクションボタン(`詳細を見る / 承認 / 再実行`)
+  - `詳細を見る` は必ず `/plans/[id]` へ遷移する
 - ページネーション or 「過去のプランを追加で読み込む」
 
 #### ルール
 
 - 失敗カードのエラー表示は **日本語化必須**: `Generation Terminated` → `生成失敗(再実行可)` 等
 - カードの cycle カラー: 日次=Cyan、 週次=Electric Purple
-
+- `music_generated` は「音楽生成済」(動画未作成でも成功扱いの中間完了)
 ---
 
 ### ③ プラン詳細(`/plans/[id]`)
 
-**目的**: 個別 DailyPlan / WeeklyPlan の内訳確認 + 承認。
+**目的**: 個別 DailyPlan / WeeklyPlan の内訳確認 + 承認 + 生成済み音声の再生/ダウンロード。
 
 #### 必須要素
 
@@ -143,12 +146,17 @@
 - 「投稿(Posts)」セクション:
   - DailyPlan の場合: 1〜2 ポストカード
   - 各ポストカード: サムネ + 最終タイトル + ジャンルバッジ + ステータス + 投稿予定時刻 + `mood / bpm_range / visual_direction / title_directive(コード形式) / description_directive`
+- 「音声トラック」セクション(Post ごと、 `GET /posts?plan_id=...` + `GET /posts/{id}/tracks`):
+  - 各 Post に 6 トラック行: `position / subtheme / duration_sec / BPM / 生成状態`
+  - 行ごとに `<audio controls>`(Basic 認証付き blob URL、 `useAuthedBlobUrl` 再利用)と「ダウンロード」ボタン
+  - トラック未生成時はプレースホルダ「未生成」+ 再生/DL 無効
 - 「参照メトリクス(Referenced Metrics)」: `window_days / sample_size / top_metrics_summary`(spec ADR-0032 の `ReferencedMetrics` と整合)+「スナップショットを表示」リンク
 
 #### 禁止
 
 - ❌ 独自指標(`Retent-Score` 等)。 ADR-0032 の Pydantic フィールド(`retention_pct` / `expected_views_24h` 等)のみ表示
 - ❌ 英語サブテキスト(`Daily automation blueprint...` 等)
+- ❌ `audio_uri` や生ストレージパスの画面表示
 
 ---
 
@@ -178,12 +186,17 @@
 
 ### ⑤ スケジューラ制御(`/scheduler`)
 
-**目的**: scheduler ON/OFF + panic-stop。
+**目的**: scheduler ON/OFF + 承認済み Plan の即時音楽生成 + panic-stop。
 
 #### 必須要素
 
 - 上段大トグル: 「スケジューラ」+ 「停止中 / 稼働中」状態バッジ + Enable トグル + 「マシン再起動後は手動有効化が必要(ADR-0031)」+ 次回発火時刻
-- 中段「実行中のジョブ」: 進行中ジョブリスト + 「全て一時停止 / 全て再開」
+- 中段「今すぐ音楽生成」:
+  - 承認済み Daily Plan のセレクト(対象日 + ジャンル概要)。 `status=approved` のみ
+  - 「今すぐ生成」ボタン → `POST /scheduler/run-now`(`plan_id`) → 202 後に `/jobs?run_id=...` へ遷移
+  - 承認済み Plan が 0 件のときボタン無効 + 「プラン一覧で承認してください」リンク(`/plans`)
+  - 409(別実行中)時はインラインエラー「別の音楽生成が実行中」
+- 中段「実行中のジョブ」: 進行中ジョブリスト(あれば `run_id` リンク)+ 「全て一時停止 / 全て再開」
 - システムステータス: 稼働率 / ヘルスチェック
 - 下段「緊急停止(Panic Stop)」赤ボーダーゾーン:
   - 警告文 + 「期間(時間)」入力(デフォルト 24)
@@ -195,6 +208,7 @@
 
 - 実行者は常に「seita」固定(`admin_suzuki / admin_tanaka / admin_root / system_auto_quota` 等は禁止)
 - 実行者列は実質情報量がないため、 単一ユーザー前提なら列削除でも可
+- target_date 入力だけで新規 Plan を自動生成して起動する UI は置かない(ADR-0011)
 
 ---
 
@@ -223,46 +237,54 @@
 
 ### ⑦ LLM プロバイダ設定(`/llm`)
 
-**目的**: provider 切替 + 月次コスト + キャッシュ統計。
+**目的**: provider / auth / model 切替 + write-only API key 管理 + 月次コスト。
 
 #### 必須要素
 
-- 上段「現在のプロバイダ」カード(大):
-  - Provider 名 + ロゴ + `モデル / 認証モード / 接続中` ステータス + ヘルスチェック時刻
+- 上段「現在のプロバイダ」カード:
+  - **active** の Provider 名 + 認証モード + 選択モデルを明示 (配列先頭ではなく GET `active` を初期選択)
 - 「プロバイダ切替」フォーム:
-  - Provider radio(OpenAI / Anthropic / Ollama)
-  - 認証モード select(api_key / codex_oauth、 Anthropic 選択時は subscription を起動時拒否注意)
-  - モデル select
-  - 「適用」ボタン + 「切替は audit_log に記録されます」注意
-- 「利用可能なプロバイダ」3 カード(現在 active 除く):
-  - 各カードに provider 説明 + 注意バッジ(Anthropic sub 禁止 / Codex OAuth グレー)+ 「切替」ボタン
-- 下段「月次利用量(YYYY-MM)」: 円形プログレス + 閾値 + プロバイダ別棒グラフ + 直近 7 日 token sparkline + 「詳細な usage_log を表示」リンク
-- 「プロンプトキャッシュ」: Anthropic ヒット率 + OpenAI Responses 自動キャッシュ率 + 過去推移 sparkline
+  - Provider select (OpenAI / Anthropic / Ollama)
+  - 認証モード select (`api_key` のみ有効。 `codex_oauth` は未対応として disabled + 説明文)
+  - モデル select (provider の supported models。保存で `app_state.llm_model` に永続化)
+  - 「保存」ボタン + 「切替は audit_log に記録されます」注意
+- API キー管理 (`auth_mode=api_key` かつ openai/anthropic のみ):
+  - `credential_source=env` → 入力を出さず「環境変数で設定済み（環境変数を使用）」
+  - `none` / `db` → password 入力で set/replace、 `db` 時は DB キー削除ボタン
+  - Ollama は `n/a` (入力なし)。インストール済み/既定モデルを明示
+- 下段「月次利用量(YYYY-MM)」: 予算進捗バー + プロバイダ別内訳
 
 #### **必須除外(Critical 違反現存)**
 
 - ❌ **オーディオプレイヤー UI(「Synthetix Drift」等)を絶対に表示しない**。 LLM 設定画面に音楽プレイヤーは不要
+- ❌ API key の平文・マスク・末尾表示
+- ❌ Codex OAuth が動作しているかのような誤誘導 (未配線)
 
 ---
 
 ### ⑧ ジョブ進捗(`/jobs`)
 
-**目的**: SSE で各ステップの実行状況をリアルタイム可視化。
+**目的**: 実行履歴と工程イベントを永続スナップショット + SSE で可視化(ADR-0023)。
 
 #### 必須要素
 
-- ヘッダー: 「ジョブ進捗」+ LIVE インジケータ(緑脈動)+ 「接続中: SSE /jobs/stream」mono + 「全て展開 / 折り畳む」
-- グリッド: ジャンル列 × ステップ行
-  - 列: 稼働中ジャンル(最大 6 列)
-  - 行: `楽曲生成 / AcoustID 検査 / 画像生成 / サムネ合成 / 動画合成 / タイトル整形 / 投稿前検証 / アップロード`
-- 各セルは小ステータスカード: 待機 / 実行中(脈動 + 進捗バー)/ 完了(緑チェック + 所要時間)/ 失敗(赤バツ + エラーカテゴリ pill)
-- 右ドロワー(選択中ジョブの詳細): コンテキスト / ステータス / VRAM 使用 / ログテール(コードブロック)/ 関連リソースリンク / 「ジョブをキャンセル」赤
-- フッターバー: 「今日完走: N / 失敗: N / 平均所要: M 分 S 秒」
+- URL: `/jobs?run_id={uuid}` で対象実行を復元。 `run_id` 省略時は直近実行を選択
+- ヘッダー: 「ジョブ進捗」+ LIVE インジケータ(緑脈動、選択 run が running のとき)+ 「接続中: SSE /jobs/stream?run_id=...」mono
+- 左(または上)「実行履歴」一覧(`GET /jobs/runs`):
+  - 各行: `run_id` 短縮 / `trigger`(cron|run_now) / 対象 Plan・日付 / 状態 / 開始・終了 / 失敗理由 1 行
+  - 行クリックで `run_id` を切替(URL 更新)
+- 右(または下)「工程タイムライン」(`GET /jobs/runs/{run_id}/events` 初期 + SSE 差分):
+  - ステップ: 音楽専用では `cycle` / `post` / `music` を必須表示
+  - 各イベント: 待機 / 実行中(脈動)/ 完了(緑 + 時刻)/ 失敗(赤 + エラーカテゴリ pill + メッセージ)
+  - 失敗工程が running のまま残らないこと(終端イベント必須)
+- 選択中 run のサマリ: 状態 / 対象 Plan リンク(`/plans/[id]`) / 開始・終了 / 所要時間 / 失敗理由
+- フッターバー: 「今日完走: N / 失敗: N / 平均所要: M 分 S 秒」(当日分の job_history 集計)
 
 #### 禁止
 
 - ❌ ヘッダーに `SYSTEM NODE: CLUSTER-A-TYO-02` 等のクラスタ識別子(単一マシン構成のため不要)
 - ❌ マルチノード前提の集計表示
+- ❌ メモリのみの進捗表示(リロードで消える UI)。初期は必ず DB snapshot
 
 ---
 
@@ -312,7 +334,7 @@
 | --- | --- |
 | 投稿者 / 実行者 | `seita`(単一ユーザー、 admin 表記は UI ヘッダー右上のみ) |
 | youtube_video_id | 11 字 Base64 形式(実物 ID)、 デモなら `dQw4w9WgXcQ` 形式 |
-| post_id / plan_id / gpu_job_id | UUID v7 形式(モックは略形でも可) |
+| post_id / plan_id / gpu_job_id / run_id | UUID v7 形式(モックは略形でも可) |
 | ジャンル名 | 英語表記(辞書照合と整合): `Lo-Fi Hip Hop / Chillhop / Ambient / Synthwave / Piano Solo / Future Garage` |
 | 日本語サブタイト | カタカナ + 漢字 + ひらがな + 半角絵文字 1 個まで、 12 字以内(ADR-0034) |
 | 時間表示(経過) | `N 分前 / N 時間前 / N 日前` |
@@ -322,9 +344,9 @@
 
 ## 4. アクセス制御 / 認証
 
-- 全画面 Basic 認証必須(`/health` のみ非認証)
-- セッション失効時の動作: 401 → frontend full reload(ログイン画面なし、 ブラウザ標準 Basic auth ダイアログ表示)
-- 「ログアウト」リンクはサイドバー底部、 クリックで Basic auth セッション破棄(ブラウザ動作依存、 ベストエフォート)
+- 全管理画面は frontend セッション必須(`/login` と `/api/auth/*` は公開)。 backend 直叩きは従来どおり Basic(`ADMIN_*`)
+- セッション失効時: ページ遷移は `/login` へリダイレクト、 `/api/backend/*` は 401
+- 「ログアウト」はサイドバー底部 / ヘッダー右。 `POST /api/auth/logout` でセッション破棄後 `/login` へ
 - audit_log への記録対象操作: scheduler ON/OFF、 dryrun_enabled 切替、 plan 承認 / 拒否、 動画 privacy 変更、 ジャンル role 変更、 panic-stop 実行、 prompt version 切替、 LLM provider 切替
 
 ## 5. レスポンシブ対応(範囲外)
@@ -349,7 +371,7 @@ stitch のモックアップは Synthetix Vibe の視覚言語とレイアウト
 | ④ Dryrun 審査 | Chapter 名が英語のみ(Lo-Fi Beats 等) | 英 / 日併記(§2 ④必須) |
 | ⑤ スケジューラ | `admin_suzuki / admin_tanaka` 複数管理者名 | `seita` 単一(§2 ⑤ルール) |
 | ⑥ 分析 | サイドバー「新規ジョブ作成 / サポート」 | canonical サイドバー(§1) |
-| ⑧ ジョブ進捗 | (該当文言「単一ノード」未挿入) | クラスタ識別子なし・単一マシン前提(§2 ⑧禁止) |
+| ⑧ ジョブ進捗 | ジャンル×フルパイプライン格子 / クラスタ識別子 | 実行履歴 + run_id 工程タイムライン・DB snapshot 初期(§2 ⑧) |
 | ⑨ プロンプト管理 | 更新者「System Administrator / Admin User」 | `seita`(§2 ⑨ルール) |
 | ⑩ ジャンル管理 | サイドバーに `Settings` 項目 | canonical サイドバー(§1) |
 | 全画面 | サイドバー見出しが画面ごとに不統一(「YMG Automation V3.0」「YMG / AI Music Engine」)/ 「MVP チェック」項目残存 | canonical サイドバー(§1)、 「MVP チェック」は画面化しない(§0) |

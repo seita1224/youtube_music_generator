@@ -1,16 +1,21 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Plus } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApiError } from "@/lib/api/client";
+import { cn } from "@/lib/utils";
 import {
   approvePlan,
+  generatePlan,
   listPlans,
   type Plan,
   type PlanCycle,
@@ -19,19 +24,27 @@ import {
 } from "@/lib/api/plans";
 
 // US3: 改善プラン一覧画面。 cycle タブ(daily/weekly)でフィルタし、 各プランを
-// card で並べる。 payload の rationale / genre_distribution 等の要点を抜き出して表示し、
+// card で並べる。 daily は「新規生成」で POST /plans を発火できる。
 // status=generated のプランは承認ボタン(useMutation→invalidate)で承認できる。
 // backend 未接続時はクエリ失敗を握り潰さず「未接続」として明示する(dryrun 画面踏襲)。
+
+/** ローカル日付を YYYY-MM-DD にする(date input / POST /plans 用)。 */
+function toDateInputValue(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 interface CycleTab {
   readonly value: PlanCycle;
   readonly label: string;
 }
 
-// タブ並びは運用順(週次の改善計画 → 日次の実行計画)。
+// タブ並びは運用順(日次の実行計画 → 週次の改善計画)。
 const CYCLE_TABS: readonly CycleTab[] = [
-  { value: "weekly", label: "週次" },
   { value: "daily", label: "日次" },
+  { value: "weekly", label: "週次" },
 ];
 
 const CYCLE_LABELS: Readonly<Record<PlanCycle, string>> = {
@@ -43,6 +56,7 @@ const STATUS_LABELS: Readonly<Record<PlanStatus, string>> = {
   generated: "生成済",
   approved: "承認済",
   executing: "実行中",
+  music_generated: "音楽生成済",
   completed: "完了",
   failed: "失敗",
 };
@@ -55,6 +69,7 @@ const STATUS_BADGE_VARIANT: Readonly<
   generated: "active",
   approved: "muted",
   executing: "default",
+  music_generated: "default",
   completed: "default",
   failed: "danger",
 };
@@ -101,7 +116,12 @@ function readStringArray(
 }
 
 export default function PlansListPage(): React.JSX.Element {
-  const [cycle, setCycle] = React.useState<PlanCycle>("weekly");
+  // dryrun 初回は日次 Plan が必要なので daily を既定にする。
+  const [cycle, setCycle] = React.useState<PlanCycle>("daily");
+  const [targetDate, setTargetDate] = React.useState<string>(() =>
+    toDateInputValue(new Date()),
+  );
+  const [forceRegenerate, setForceRegenerate] = React.useState(false);
   const queryClient = useQueryClient();
 
   const query = useQuery<PlanListResponse>({
@@ -116,11 +136,34 @@ export default function PlansListPage(): React.JSX.Element {
     },
   });
 
+  const generateMutation = useMutation({
+    mutationFn: () =>
+      generatePlan({
+        cycle: "daily",
+        target_date: targetDate,
+        force_regenerate: forceRegenerate,
+      }),
+    onSuccess: () => {
+      setForceRegenerate(false);
+      setCycle("daily");
+      void queryClient.invalidateQueries({ queryKey: ["plans"] });
+    },
+  });
+
   const handleCycleChange = React.useCallback((value: string): void => {
     setCycle(value as PlanCycle);
   }, []);
 
   const items = query.data?.items ?? [];
+  const generateError = generateMutation.error;
+  const generateErrorMessage =
+    generateError instanceof ApiError && generateError.status === 409
+      ? "同じ対象日のプランが既にあります。 「再生成する」にチェックして再試行してください。"
+      : generateError instanceof ApiError && generateError.status === 422
+        ? "プラン生成に失敗しました(LLM 検証エラー)。 LLM 設定とモデルを確認してください。"
+        : generateError
+          ? "プラン生成に失敗しました。 時間をおいて再試行してください。"
+          : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -128,6 +171,64 @@ export default function PlansListPage(): React.JSX.Element {
         <CalendarClock className="h-5 w-5 text-primary" aria-hidden="true" />
         <h1 className="text-lg font-semibold text-slate-200">改善プラン</h1>
       </div>
+
+      <Card data-testid="plan-generate-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-slate-300">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            日次プランを新規生成
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-sm text-slate-400">
+            LLM で日次 Plan を生成します。 承認後、 dryrun モードなら投稿せず動画生成まで進みます。
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="flex min-w-[12rem] flex-col gap-1.5">
+              <label htmlFor="plan-target-date" className="text-xs text-slate-400">
+                対象日
+              </label>
+              <Input
+                id="plan-target-date"
+                data-testid="plan-target-date"
+                type="date"
+                value={targetDate}
+                onChange={(event) => setTargetDate(event.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300 sm:pb-2">
+              <input
+                data-testid="plan-force-regenerate"
+                type="checkbox"
+                checked={forceRegenerate}
+                onChange={(event) => setForceRegenerate(event.target.checked)}
+                className="h-4 w-4 accent-primary"
+              />
+              再生成する
+            </label>
+            <Button
+              data-testid="plan-generate-btn"
+              variant="default"
+              size="sm"
+              className="sm:ml-auto"
+              disabled={!targetDate || generateMutation.isPending}
+              onClick={() => generateMutation.mutate()}
+            >
+              {generateMutation.isPending ? "生成中…" : "新規生成"}
+            </Button>
+          </div>
+          {generateErrorMessage && (
+            <p data-testid="plan-generate-error" className="text-sm text-danger">
+              {generateErrorMessage}
+            </p>
+          )}
+          {generateMutation.isSuccess && (
+            <p data-testid="plan-generate-success" className="text-sm text-slate-300">
+              生成しました。 下の一覧で内容を確認し、 「承認する」を押してください。
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs
         data-testid="plan-cycle-filter"
@@ -262,29 +363,34 @@ function PlanCard({
           <MetaRow label="承認日時" value={formatDate(plan.approved_at)} />
         </dl>
 
-        {canApprove && (
-          <>
-            <Separator />
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-end">
-                <Button
-                  data-testid="plan-approve-btn"
-                  variant="default"
-                  size="sm"
-                  disabled={approving}
-                  onClick={onApprove}
-                >
-                  承認する
-                </Button>
-              </div>
-              {approveFailed && (
-                <p className="text-right text-xs text-danger">
-                  承認に失敗しました。 時間をおいて再試行してください。
-                </p>
-              )}
-            </div>
-          </>
-        )}
+        <Separator />
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-end gap-2">
+            <Link
+              href={`/plans/${plan.id}`}
+              data-testid="plan-detail-link"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              詳細を見る
+            </Link>
+            {canApprove ? (
+              <Button
+                data-testid="plan-approve-btn"
+                variant="default"
+                size="sm"
+                disabled={approving}
+                onClick={onApprove}
+              >
+                承認する
+              </Button>
+            ) : null}
+          </div>
+          {approveFailed ? (
+            <p className="text-right text-xs text-danger">
+              承認に失敗しました。 時間をおいて再試行してください。
+            </p>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,32 +1,15 @@
 """``/llm`` 管理エンドポイント (US5, T117, contracts/backend-api.yaml ``/llm`` 系)。
 
-マスター LLM provider の切替とコスト可視化を担う 3 route を提供する (いずれも Basic 認証
-配下。 配線は ``main.py:_build_protected_router`` が ``include_router(router)`` する後段の
-責務):
+マスター LLM provider の切替・モデル永続化・write-only API key 管理とコスト可視化を担う
+(いずれも Basic 認証配下):
 
-- ``GET /llm/providers`` — 有効な provider 選択肢 (:class:`LlmProviderConfig` のリスト)。
-  各要素は ``available`` (API key / 接続が設定済みか)、 ``auth_modes`` (許可された認証方式)、
-  ``models`` (対応モデル) を持つ。 現在 active な provider/auth_mode は contract 上の
-  別フィールドを持たないため、 UI 側が別途判定する (ADR-0019)。
-- ``PUT /llm/providers`` — active provider を切替える (ADR-0019: 管理 UI から再起動なし)。
-  ``provider`` / ``auth_mode`` を ``app_state`` に 2 キー upsert し、 切替を ``audit_log`` に
-  記録する。 ``Anthropic + 非 api_key`` (subscription) は永続化前に 400 で弾く (FR-022)。
-- ``GET /llm/usage`` — 当月 (or ``month=YYYY-MM`` 指定月) の ``usage_log`` を集計し、
-  合計コスト + provider 別内訳 + 月次予算と進捗% を返す (:class:`LlmUsageResponse`, ADR-0024)。
-
-設計方針:
-
-- ``app_state`` の active provider 読み出し (GET の現在値) と PUT の妥当性検証は
-  ``llm.factory`` を再利用し、 本モジュールでは重複定義しない (``resolve_provider_config`` /
-  ``app_state_table``)。 PUT の upsert は ``api/scheduler.py:_upsert_flag`` を踏襲する。
-- ``app_state.value`` は **JSON literal** で保持する (factory の ``_decode_app_state_value`` が
-  一段 ``json.loads`` する前提)。 JSONB 列に Python ``str`` を渡すと SQLAlchemy が JSON
-  エンコードして ``'"openai"'`` 相当を格納するため、 読取側と往復一致する。
-- ``commit`` は本ハンドラの責務 (HTTP リクエスト = トランザクション境界)。 ``write_audit_log``
-  は flush までなので、 app_state upsert と audit を 1 トランザクションでまとめて commit する。
-- usage 集計は ``usage_log_table`` (``llm/usage_writer.py``) を流用するが、 同テーブルは
-  ``created_at`` を非宣言なので、 月境界フィルタ用に ``created_at`` 付きの軽量 Core Table を
-  本モジュールに閉じて再宣言する (pricing / usage_writer と同じ疎結合方針)。
+- ``GET /llm/providers`` — :class:`LlmSettingsResponse`
+  (``active`` + 各 provider の ``credential_source`` / ``credential_configured``)。
+- ``PUT /llm/providers`` — active provider / auth_mode / model を ``app_state`` に upsert。
+  ``codex_oauth`` は未配線のため 422。 不正 model は 422。 Anthropic + 非 api_key は 400。
+- ``PUT /llm/credentials`` / ``DELETE /llm/credentials/{provider}`` — Fernet 暗号化の
+  write-only 鍵管理。 env SoT 時は 409。 平文は応答・ログに出さない。
+- ``GET /llm/usage`` — 月次集計 (ADR-0024)。
 """
 
 from __future__ import annotations
@@ -36,7 +19,7 @@ from decimal import Decimal
 from typing import Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import (
     Column,
     DateTime,
@@ -55,49 +38,58 @@ from ymg_backend.core.security import BasicAuthUser
 from ymg_backend.infrastructure.audit import write_audit_log
 from ymg_backend.infrastructure.db.session import get_session
 from ymg_backend.llm.anthropic_provider import _SUPPORTED_MODELS as _ANTHROPIC_MODELS
-from ymg_backend.llm.factory import app_state_table, resolve_provider_config
+from ymg_backend.llm.base import LlmError
+from ymg_backend.llm.factory import (
+    _KEY_LLM_AUTH_MODE,
+    _KEY_LLM_MODEL,
+    _KEY_LLM_PROVIDER,
+    _read_app_state_overrides,
+    app_state_table,
+    resolve_provider_config,
+    validate_model_for_provider,
+)
 from ymg_backend.llm.ollama_provider import _SUPPORTED_MODELS as _OLLAMA_MODELS
 from ymg_backend.llm.openai_provider import _SUPPORTED_MODELS as _OPENAI_MODELS
+from ymg_backend.llm.secrets import (
+    CredentialSource,
+    LlmSecretProvider,
+    credential_configured,
+    credential_source_for,
+    delete_api_key,
+    list_db_secret_providers,
+    upsert_api_key,
+)
 
 router: Final = APIRouter(prefix="/llm", tags=["llm"])
 
-# contract enum 型 (backend-api.yaml LlmProviderConfig / PUT body)。
 LlmProvider = Literal["openai", "anthropic", "ollama"]
 LlmAuthMode = Literal["api_key", "codex_oauth"]
 
-# app_state のキー (data-model.md §app_state seed / factory._KEY_*)。
-_KEY_LLM_PROVIDER: Final[str] = "llm_provider"
-_KEY_LLM_AUTH_MODE: Final[str] = "llm_auth_mode"
+# API key 入力 DoS 防止の実務上限 (OpenAPI / UI と同一)。
+LLM_API_KEY_MAX_LENGTH: Final[int] = 2048
 
-# audit_log の action 名 (provider 切替, ADR-0019)。
 _ACTION_PROVIDER_CHANGED: Final[str] = "llm_provider_changed"
+_ACTION_CREDENTIAL_SET: Final[str] = "llm_credential_set"
+_ACTION_CREDENTIAL_DELETED: Final[str] = "llm_credential_deleted"
 
-# Anthropic が許可する唯一の認証方式 (FR-022 / ADR-0019 / factory と整合)。
 _ANTHROPIC_ALLOWED_AUTH_MODE: Final[str] = "api_key"
 
-# provider 別の許可された認証方式 (contract LlmProviderConfig.auth_modes)。
-# openai のみ codex_oauth 併用可 (config.py:94 の settings バリデータと同趣旨)。
+# UI 選択肢には残すが、 PUT は 422 で拒否する (Codex OAuth 未配線)。
 _AUTH_MODES: Final[dict[LlmProvider, tuple[LlmAuthMode, ...]]] = {
     "openai": ("api_key", "codex_oauth"),
     "anthropic": ("api_key",),
     "ollama": ("api_key",),
 }
 
-# provider 別の対応モデル一覧 (各 provider の ``_SUPPORTED_MODELS`` を参照、 実構築しない)。
 _MODELS: Final[dict[LlmProvider, tuple[str, ...]]] = {
     "openai": _OPENAI_MODELS,
     "anthropic": _ANTHROPIC_MODELS,
     "ollama": _OLLAMA_MODELS,
 }
 
-# provider 表示順 (contract のリスト順、 UI の安定描画用)。
 _PROVIDER_ORDER: Final[tuple[LlmProvider, ...]] = ("openai", "anthropic", "ollama")
-
-# usage 集計用の月境界フィルタ正規表現 (Query パターン検証で 422 を返す)。
 _MONTH_PATTERN: Final[str] = r"^\d{4}-\d{2}$"
 
-# usage_log 集計用の Core Table (writer 側は created_at 非宣言のため本モジュールで再宣言)。
-# 月境界フィルタに created_at が必要。 ORM 層には依存しない (疎結合方針)。
 _metadata: Final[MetaData] = MetaData()
 
 usage_log_table: Final[Table] = Table(
@@ -112,32 +104,78 @@ usage_log_table: Final[Table] = Table(
 )
 
 
-class LlmProviderConfig(BaseModel):
-    """``GET /llm/providers`` の 1 要素 (backend-api.yaml LlmProviderConfig)。"""
-
-    provider: LlmProvider
-    available: bool
-    auth_modes: list[LlmAuthMode]
-    models: list[str]
-
-
-class LlmProviderPutBody(BaseModel):
-    """``PUT /llm/providers`` のリクエストボディ (contract: ``required: [provider, auth_mode]``)。"""
-
-    provider: LlmProvider
-    auth_mode: LlmAuthMode
-
-
-class LlmProviderState(BaseModel):
-    """``PUT /llm/providers`` のレスポンス (切替後の現在値)。"""
+class LlmActiveState(BaseModel):
+    """現在 active な provider / auth_mode / model。"""
 
     provider: LlmProvider
     auth_mode: LlmAuthMode
     model: str
 
 
+class LlmProviderConfig(BaseModel):
+    """``GET /llm/providers`` の providers[] 要素。"""
+
+    provider: LlmProvider
+    available: bool
+    auth_modes: list[LlmAuthMode]
+    models: list[str]
+    credential_source: CredentialSource
+    credential_configured: bool
+    # Codex OAuth 等、 UI で無効表示する認証方式。
+    unsupported_auth_modes: list[LlmAuthMode] = Field(default_factory=list)
+
+
+class LlmSettingsResponse(BaseModel):
+    """``GET /llm/providers`` のレスポンス。"""
+
+    active: LlmActiveState
+    providers: list[LlmProviderConfig]
+
+
+class LlmProviderPutBody(BaseModel):
+    """``PUT /llm/providers`` のリクエストボディ。"""
+
+    provider: LlmProvider
+    auth_mode: LlmAuthMode
+    model: str
+
+
+class LlmProviderState(BaseModel):
+    """``PUT /llm/providers`` のレスポンス。"""
+
+    provider: LlmProvider
+    auth_mode: LlmAuthMode
+    model: str
+
+
+class LlmCredentialPutBody(BaseModel):
+    """``PUT /llm/credentials`` のボディ。 平文は応答に出さない。
+
+    前後空白は保存前に strip する。 空白のみは拒否。 最大長は
+    :data:`LLM_API_KEY_MAX_LENGTH` (入力 DoS 防止)。
+    """
+
+    provider: LlmSecretProvider
+    api_key: str = Field(min_length=1, max_length=LLM_API_KEY_MAX_LENGTH)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _strip_api_key(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class LlmCredentialState(BaseModel):
+    """credential 書込/削除後のメタデータのみ (秘密値なし)。"""
+
+    provider: LlmSecretProvider
+    credential_source: CredentialSource
+    credential_configured: bool
+
+
 class LlmProviderUsage(BaseModel):
-    """``LlmUsage.by_provider`` の値 (provider 別コスト / トークン内訳)。"""
+    """``LlmUsage.by_provider`` の値。"""
 
     cost_usd: float
     prompt_tokens: int
@@ -146,7 +184,7 @@ class LlmProviderUsage(BaseModel):
 
 
 class LlmUsageResponse(BaseModel):
-    """``GET /llm/usage`` のレスポンス (backend-api.yaml LlmUsage)。"""
+    """``GET /llm/usage`` のレスポンス。"""
 
     month: str
     total_cost_usd: float
@@ -155,32 +193,23 @@ class LlmUsageResponse(BaseModel):
     by_provider: dict[str, LlmProviderUsage]
 
 
-def _provider_available(provider: LlmProvider, settings: Settings) -> bool:
-    """provider が利用可能か (対応する API key / 接続が設定済みか) を返す。
-
-    openai / anthropic は対応 API key が非空かで判定する。 ollama はローカル実行で
-    認証不要のため常に True (接続可否は health_check 側の責務)。
-    """
+def _unsupported_auth_modes(provider: LlmProvider) -> list[LlmAuthMode]:
+    """未配線の認証方式。 openai の codex_oauth のみ。"""
     if provider == "openai":
-        return bool(settings.openai_api_key.get_secret_value())
-    if provider == "anthropic":
-        return bool(settings.anthropic_api_key.get_secret_value())
-    return True  # ollama
+        return ["codex_oauth"]
+    return []
 
 
 def _validate_combination(provider: LlmProvider, auth_mode: LlmAuthMode) -> None:
-    """provider / auth_mode の組合せを永続化前に検証する (不正は 400)。
-
-    - Anthropic + 非 api_key (subscription) は FR-022 で禁止 (factory._build_anthropic と同趣旨)。
-    - codex_oauth は openai のみ (config.py:94 の settings バリデータと同趣旨。 PUT は
-      app_state 経路なので独自に弾く)。
-
-    provider を実構築せず組合せだけ検証するため I/O / 秘密値参照を伴わない (API key 未設定でも
-    正しく 400 を返せる)。
-
-    Raises:
-        HTTPException: 不正な組合せの場合 (status 400)。
-    """
+    """provider / auth_mode の組合せを永続化前に検証する。"""
+    if auth_mode == "codex_oauth":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Codex OAuth (auth_mode='codex_oauth') は未実装のため保存できません。"
+                " auth_mode='api_key' を使用してください。"
+            ),
+        )
     if provider == "anthropic" and auth_mode != _ANTHROPIC_ALLOWED_AUTH_MODE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -189,25 +218,21 @@ def _validate_combination(provider: LlmProvider, auth_mode: LlmAuthMode) -> None
                 f"(指定された auth_mode='{auth_mode}')。 subscription は FR-022 で禁止されています。"
             ),
         )
-    if auth_mode == "codex_oauth" and provider != "openai":
+
+
+def _validate_model(provider: LlmProvider, model: str) -> None:
+    """model が provider の supported に無ければ 422。"""
+    try:
+        validate_model_for_provider(provider, model)
+    except LlmError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"auth_mode='codex_oauth' は provider='openai' のみサポートします "
-                f"(指定された provider='{provider}')。"
-            ),
-        )
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.message,
+        ) from exc
 
 
 def _month_bounds(month: str | None, *, now: datetime) -> tuple[str, datetime, datetime]:
-    """``YYYY-MM`` から ``[month_start, next_month_start)`` の半開区間を返す。
-
-    ``month`` 省略時は ``now`` (UTC) の当月。 月境界は to_char 依存を避け index が効く
-    範囲フィルタにする。 戻り値は ``(正規化月文字列, 月初, 翌月初)``。
-
-    Raises:
-        HTTPException: ``month`` が ``YYYY-MM`` だが月が 1..12 の範囲外の場合 (422)。
-    """
+    """``YYYY-MM`` から ``[month_start, next_month_start)`` の半開区間を返す。"""
     if month is None:
         year, mon = now.year, now.month
     else:
@@ -225,72 +250,91 @@ def _month_bounds(month: str | None, *, now: datetime) -> tuple[str, datetime, d
 
 @router.get(
     "/providers",
-    response_model=list[LlmProviderConfig],
-    summary="List available LLM providers and auth modes",
+    response_model=LlmSettingsResponse,
+    summary="LLM settings: active provider and credential metadata",
 )
 async def list_providers(
     user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> list[LlmProviderConfig]:
-    """有効な provider 選択肢を返す (ADR-0019)。
+) -> LlmSettingsResponse:
+    """active 設定と各 provider の選択肢 / credential メタデータを返す。"""
+    del user
+    active_cfg = await resolve_provider_config(
+        settings,
+        session=session,
+        strict_model=False,
+    )
+    db_providers = await list_db_secret_providers(session)
 
-    各 provider の ``available`` (API key / 接続設定済みか)、 許可された ``auth_modes``、
-    対応 ``models`` を contract 順 (openai → anthropic → ollama) で列挙する。 provider は
-    実構築せず定数を参照する。
-    """
-    del user  # 認証のみ目的。
-    return [
-        LlmProviderConfig(
-            provider=provider,
-            available=_provider_available(provider, settings),
-            auth_modes=list(_AUTH_MODES[provider]),
-            models=list(_MODELS[provider]),
+    providers: list[LlmProviderConfig] = []
+    for provider in _PROVIDER_ORDER:
+        source = credential_source_for(
+            settings,
+            provider,
+            has_db_secret=provider in db_providers,
         )
-        for provider in _PROVIDER_ORDER
-    ]
+        configured = credential_configured(source)
+        providers.append(
+            LlmProviderConfig(
+                provider=provider,
+                available=configured,
+                auth_modes=list(_AUTH_MODES[provider]),
+                models=list(_MODELS[provider]),
+                credential_source=source,
+                credential_configured=configured,
+                unsupported_auth_modes=_unsupported_auth_modes(provider),
+            )
+        )
+
+    return LlmSettingsResponse(
+        active=LlmActiveState(
+            provider=active_cfg.provider,
+            auth_mode=_narrow_auth_mode(active_cfg.auth_mode),
+            model=active_cfg.model,
+        ),
+        providers=providers,
+    )
 
 
 @router.put(
     "/providers",
     response_model=LlmProviderState,
-    summary="Change active LLM provider (no restart, ADR-0019)",
-    responses={400: {"description": "Invalid combination (Anthropic + subscription forbidden)."}},
+    summary="Change active LLM provider/model (no restart, ADR-0019)",
+    responses={
+        400: {"description": "Invalid combination (Anthropic + non-api_key)."},
+        422: {"description": "Unsupported auth_mode (codex_oauth) or invalid model."},
+    },
 )
 async def set_provider(
     body: LlmProviderPutBody,
     user: BasicAuthUser,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> LlmProviderState:
-    """active provider / auth_mode を切替える (ADR-0019: 再起動なし切替)。
+    """active provider / auth_mode / model を切替える。
 
-    永続化前に組合せを検証し (Anthropic + 非 api_key は 400)、 ``app_state`` の
-    ``llm_provider`` / ``llm_auth_mode`` を 2 キー upsert、 切替を ``audit_log`` に記録する。
-    同値要求は no-op (audit / 書込なし) で現状を返す。
-
-    Args:
-        body: ``{"provider": ..., "auth_mode": ...}``。
-        user: Basic 認証済みユーザー名 (audit actor)。
-        session: DB セッション (本ハンドラが commit する)。
-
-    Returns:
-        切替後の :class:`LlmProviderState` (provider / auth_mode / 既定 model)。
-
-    Raises:
-        HTTPException: provider / auth_mode の組合せが不正な場合 (400, FR-022)。
+    リクエストは厳格検証する。 既存の永続値が provider/model 不整合でも、
+    audit ``from`` 用の読取は non-strict (または LlmError を捕捉) し、
+    有効な組合せへの修復 PUT が 500 にならないようにする。
     """
     _validate_combination(body.provider, body.auth_mode)
+    _validate_model(body.provider, body.model)
 
-    current = await resolve_provider_config(get_settings(), session=session)
-    if current.provider == body.provider and current.auth_mode == body.auth_mode:
-        # 同値: 書込 / audit せず現状を返す (scheduler.py と同方針)。
+    current_from = await _read_active_for_audit(session)
+    if (
+        current_from["provider"] == body.provider
+        and current_from["auth_mode"] == body.auth_mode
+        and current_from["model"] == body.model
+    ):
         return LlmProviderState(
-            provider=current.provider,
-            auth_mode=_narrow_auth_mode(current.auth_mode),
-            model=current.model,
+            provider=body.provider,
+            auth_mode=body.auth_mode,
+            model=body.model,
         )
 
     await _upsert_app_state(session, _KEY_LLM_PROVIDER, body.provider)
     await _upsert_app_state(session, _KEY_LLM_AUTH_MODE, body.auth_mode)
+    await _upsert_app_state(session, _KEY_LLM_MODEL, body.model)
     await write_audit_log(
         session,
         action=_ACTION_PROVIDER_CHANGED,
@@ -299,18 +343,114 @@ async def set_provider(
         target_id=_KEY_LLM_PROVIDER,
         payload={
             "actor": user,
-            "from": {"provider": current.provider, "auth_mode": current.auth_mode},
-            "to": {"provider": body.provider, "auth_mode": body.auth_mode},
+            "from": current_from,
+            "to": {
+                "provider": body.provider,
+                "auth_mode": body.auth_mode,
+                "model": body.model,
+            },
         },
     )
     await session.commit()
 
-    # 切替後の現在値を返す (model は factory が provider から既定解決)。
-    updated = await resolve_provider_config(get_settings(), session=session)
+    # 検証済み body を永続化した直後なので、応答は body から決定的に返す
+    # (再 resolve 失敗で 500 にしない)。
     return LlmProviderState(
-        provider=updated.provider,
-        auth_mode=_narrow_auth_mode(updated.auth_mode),
-        model=updated.model,
+        provider=body.provider,
+        auth_mode=body.auth_mode,
+        model=body.model,
+    )
+
+
+@router.put(
+    "/credentials",
+    response_model=LlmCredentialState,
+    summary="Set/replace encrypted LLM API key (write-only)",
+    responses={
+        409: {"description": "Environment variable is source of truth; cannot override."},
+        422: {"description": "Empty, whitespace-only, or too-long api_key."},
+    },
+)
+async def put_credential(
+    body: LlmCredentialPutBody,
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> LlmCredentialState:
+    """API key を Fernet 暗号化して upsert する。 応答に平文は含めない。"""
+    # strip / 空 / max_length は LlmCredentialPutBody で検証済み。
+    try:
+        await upsert_api_key(session, settings, body.provider, body.api_key)
+    except RuntimeError as exc:
+        if str(exc) == "credential_source_is_env":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "環境変数で API key が設定済みのため DB には保存できません(環境変数を使用)。"
+                ),
+            ) from exc
+        raise
+    await write_audit_log(
+        session,
+        action=_ACTION_CREDENTIAL_SET,
+        actor=user,
+        target_type="llm_provider_secrets",
+        target_id=body.provider,
+        payload={"actor": user, "provider": body.provider, "op": "set"},
+    )
+    await session.commit()
+    return LlmCredentialState(
+        provider=body.provider,
+        credential_source="db",
+        credential_configured=True,
+    )
+
+
+@router.delete(
+    "/credentials/{provider}",
+    response_model=LlmCredentialState,
+    summary="Delete DB-stored LLM API key (env unaffected)",
+    responses={
+        409: {"description": "Environment variable is source of truth; cannot clear."},
+        404: {"description": "No DB-stored credential for this provider."},
+    },
+)
+async def clear_credential(
+    provider: LlmSecretProvider,
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> LlmCredentialState:
+    """DB の暗号化行のみ削除する。 env がある場合は 409。 行が無ければ 404。"""
+    try:
+        deleted = await delete_api_key(session, settings, provider)
+    except RuntimeError as exc:
+        if str(exc) == "credential_source_is_env":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "環境変数で API key が設定済みのため DB キーは削除できません(環境変数を使用)。"
+                ),
+            ) from exc
+        raise
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"provider='{provider}' の DB 資格情報は存在しません。",
+        )
+    await write_audit_log(
+        session,
+        action=_ACTION_CREDENTIAL_DELETED,
+        actor=user,
+        target_type="llm_provider_secrets",
+        target_id=provider,
+        payload={"actor": user, "provider": provider, "op": "delete"},
+    )
+    await session.commit()
+    return LlmCredentialState(
+        provider=provider,
+        credential_source="none",
+        credential_configured=False,
     )
 
 
@@ -325,20 +465,7 @@ async def get_usage(
     settings: Annotated[Settings, Depends(get_settings)],
     month: Annotated[str | None, Query(pattern=_MONTH_PATTERN, examples=["2026-05"])] = None,
 ) -> LlmUsageResponse:
-    """指定月 (既定: 当月 UTC) の ``usage_log`` を集計してコストと予算進捗を返す (ADR-0024)。
-
-    ``cost_usd`` の合計と provider 別内訳 (cost + token) を ``[月初, 翌月初)`` の半開区間で
-    SUM する。 予算進捗% は ``total / monthly_budget_usd * 100`` (budget<=0 は 0 でゼロ除算回避)。
-
-    Args:
-        user: Basic 認証済みユーザー名 (認証のみ目的)。
-        session: DB セッション。
-        settings: ``monthly_budget_usd`` 参照用。
-        month: ``YYYY-MM``。 省略時は当月。 形式不一致は 422 (``Query(pattern=...)``)。
-
-    Returns:
-        :class:`LlmUsageResponse` (合計コスト + provider 別内訳 + 予算 + 進捗%)。
-    """
+    """指定月 (既定: 当月 UTC) の ``usage_log`` を集計してコストと予算進捗を返す。"""
     del user
     normalized, month_start, next_start = _month_bounds(month, now=datetime.now(UTC))
 
@@ -385,39 +512,55 @@ async def get_usage(
     )
 
 
-# ---------------------------------------------------------------------------------
-# 内部ヘルパ (app_state upsert / 型正規化)
-# ---------------------------------------------------------------------------------
 async def _upsert_app_state(session: AsyncSession, key: str, value: str) -> None:
-    """``app_state`` の ``key`` を ``value`` に upsert する (JSONB 列 → JSON literal で格納)。
-
-    ``api/scheduler.py:_upsert_flag`` を踏襲。 ``value`` (str) を JSONB 列に渡すと SQLAlchemy が
-    JSON エンコードして ``'"openai"'`` 相当を格納するため、 factory の ``_decode_app_state_value``
-    による一段デコードと往復一致する。 commit は呼び出し側の責務 (ここでは flush)。
-    """
+    """``app_state`` の ``key`` を ``value`` に upsert する (``updated_at`` も更新)。"""
     stmt = (
         insert(app_state_table)
-        .values(key=key, value=value)
+        .values(key=key, value=value, updated_at=func.now())
         .on_conflict_do_update(
             index_elements=[app_state_table.c.key],
-            set_={"value": value},
+            set_={"value": value, "updated_at": func.now()},
         )
     )
     await session.execute(stmt)
     await session.flush()
 
 
-def _narrow_auth_mode(raw: str) -> LlmAuthMode:
-    """app_state / env 由来の auth_mode (生 str) を contract enum に絞り込む。
+async def _read_active_for_audit(session: AsyncSession) -> dict[str, str]:
+    """audit ``from`` 用に現行 active を読む。
 
-    factory の ``ProviderConfig.auth_mode`` は検証前の生値もありうる (``str``)。 contract enum
-    外の値は ``api_key`` に丸める (PUT 経路は ``_validate_combination`` で弾くため通常到達しない)。
+    provider/model 不整合でも GET と同様に non-strict で読む。
+    未知 provider / codex_oauth 等で ``LlmError`` になる場合は
+    app_state / env の生値を audit 用に残す。
     """
+    try:
+        current = await resolve_provider_config(
+            get_settings(),
+            session=session,
+            strict_model=False,
+        )
+    except LlmError:
+        settings = get_settings()
+        overrides = await _read_app_state_overrides(session)
+        return {
+            "provider": overrides.get(_KEY_LLM_PROVIDER, settings.llm_provider),
+            "auth_mode": overrides.get(_KEY_LLM_AUTH_MODE, settings.llm_auth_mode),
+            "model": overrides.get(_KEY_LLM_MODEL, ""),
+        }
+    return {
+        "provider": current.provider,
+        "auth_mode": current.auth_mode,
+        "model": current.model,
+    }
+
+
+def _narrow_auth_mode(raw: str) -> LlmAuthMode:
+    """app_state / env 由来の auth_mode を contract enum に絞り込む。"""
     return "codex_oauth" if raw == "codex_oauth" else "api_key"
 
 
 def _to_float(value: object) -> float:
-    """SUM 結果 (Decimal / int / None) を float へ正規化する (None は 0.0)。"""
+    """SUM 結果を float へ正規化する。"""
     if value is None:
         return 0.0
     if isinstance(value, Decimal):
@@ -428,7 +571,7 @@ def _to_float(value: object) -> float:
 
 
 def _to_int(value: object) -> int:
-    """SUM 結果 (Decimal / int / None) を int へ正規化する (None は 0)。"""
+    """SUM 結果を int へ正規化する。"""
     if value is None:
         return 0
     if isinstance(value, Decimal):
@@ -439,10 +582,14 @@ def _to_int(value: object) -> int:
 
 
 __all__ = [
+    "LlmActiveState",
+    "LlmCredentialPutBody",
+    "LlmCredentialState",
     "LlmProviderConfig",
     "LlmProviderPutBody",
     "LlmProviderState",
     "LlmProviderUsage",
+    "LlmSettingsResponse",
     "LlmUsageResponse",
     "router",
 ]

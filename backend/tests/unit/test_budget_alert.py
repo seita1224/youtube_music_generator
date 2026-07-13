@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
 from ymg_backend.core.config import Settings
 from ymg_backend.domain.budget.alert import check_budget_and_alert
@@ -89,7 +90,11 @@ def _row(key: str, value: Any) -> Any:
 
 
 def _settings(budget: float) -> Settings:
-    return Settings(monthly_budget_usd=budget)
+    return Settings(
+        monthly_budget_usd=budget,
+        admin_password=SecretStr("test-admin-password"),
+        _env_file=None,
+    )
 
 
 _NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)

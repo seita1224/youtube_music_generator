@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, OctagonX } from "lucide-react";
+import { CalendarClock, OctagonX, Play } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,22 +19,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ApiError } from "@/lib/api/client";
+import { listPlans, type Plan } from "@/lib/api/plans";
 import {
   getSchedulerState,
   panicStop,
+  runNow,
+  runNowConflictMessage,
   setMode,
   setScheduler,
   type PanicStopResult,
+  type RunNowResponse,
   type SchedulerState,
 } from "@/lib/api/scheduler";
 
 // US4: スケジューラ運用画面(screen-spec.md / ADR-0031)。
-// scheduler 有効/無効トグル(setScheduler)、 dryrun↔投稿モード切替(setMode)、
-// コンプラ緊急停止(panic-stop): window_hours を指定して直近動画を private 化する。
-// backend `GET /scheduler/mode` は無いため mode はトグル操作の戻り値で楽観反映する。
-// backend 未接続時はクエリ失敗を握り潰さず「未接続」として明示する(dryrun と同方針)。
+// scheduler 有効/無効トグル、 dryrun↔投稿モード切替、 コンプラ緊急停止。
+// 「今すぐ生成」は承認済み Daily Plan を選び POST /scheduler/run-now(plan_id)。
+// 202 後は /jobs?run_id=... へ遷移。 409 は「別の音楽生成が実行中」等を表示。
 
 const SCHEDULER_QUERY_KEY = ["scheduler"] as const;
+const APPROVED_PLANS_QUERY_KEY = ["plans", "daily", "approved"] as const;
 const DEFAULT_WINDOW_HOURS = 24;
 const MIN_WINDOW_HOURS = 1;
 
@@ -63,7 +70,32 @@ function formatDateTime(value: string | undefined): string {
   });
 }
 
+/** payload から genre_distribution の上位ジャンルを要約する。 */
+function summarizeGenres(plan: Plan): string {
+  const raw = plan.payload["genre_distribution"];
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return "ジャンル未設定";
+  }
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+  if (entries.length === 0) {
+    return "ジャンル未設定";
+  }
+  return entries
+    .map(([genre, ratio]) => `${genre} ${Math.round(ratio * 100)}%`)
+    .join(" / ");
+}
+
+/** セレクト用ラベル: 対象日 + ジャンル概要。 */
+function planOptionLabel(plan: Plan): string {
+  const date = plan.target_date ?? "日付不明";
+  return `${date} — ${summarizeGenres(plan)}`;
+}
+
 export default function SchedulerPage(): React.JSX.Element {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [windowHoursInput, setWindowHoursInput] = React.useState(
@@ -73,11 +105,34 @@ export default function SchedulerPage(): React.JSX.Element {
   // dryrun 状態は GET 不可のため、 トグルの戻り値で楽観反映する(初期は不明)。
   const [dryrunEnabled, setDryrunEnabled] = React.useState<boolean | null>(null);
   const [panicResult, setPanicResult] = React.useState<PanicStopResult | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = React.useState<string>("");
 
   const query = useQuery<SchedulerState>({
     queryKey: SCHEDULER_QUERY_KEY,
     queryFn: getSchedulerState,
   });
+
+  const approvedPlansQuery = useQuery({
+    queryKey: APPROVED_PLANS_QUERY_KEY,
+    queryFn: () => listPlans("daily", "approved"),
+  });
+
+  const approvedPlans = approvedPlansQuery.data?.items ?? [];
+
+  // 一覧が変わったら未選択 or 消えた選択を補正する。
+  React.useEffect(() => {
+    if (approvedPlans.length === 0) {
+      setSelectedPlanId("");
+      return;
+    }
+    if (
+      selectedPlanId &&
+      approvedPlans.some((plan) => plan.id === selectedPlanId)
+    ) {
+      return;
+    }
+    setSelectedPlanId(approvedPlans[0]?.id ?? "");
+  }, [approvedPlans, selectedPlanId]);
 
   const invalidate = (): Promise<void> =>
     queryClient.invalidateQueries({ queryKey: SCHEDULER_QUERY_KEY });
@@ -107,6 +162,13 @@ export default function SchedulerPage(): React.JSX.Element {
     },
   });
 
+  const runNowMutation = useMutation<RunNowResponse, Error, string>({
+    mutationFn: (planId) => runNow(planId),
+    onSuccess: (data) => {
+      router.push(`/jobs?run_id=${encodeURIComponent(data.run_id)}`);
+    },
+  });
+
   const parsedWindowHours = Number.parseInt(windowHoursInput, 10);
   const windowHoursValid =
     Number.isInteger(parsedWindowHours) && parsedWindowHours >= MIN_WINDOW_HOURS;
@@ -114,9 +176,24 @@ export default function SchedulerPage(): React.JSX.Element {
   const mutating =
     schedulerMutation.isPending ||
     modeMutation.isPending ||
-    panicMutation.isPending;
+    panicMutation.isPending ||
+    runNowMutation.isPending;
 
   const nextDryrun = dryrunEnabled === null ? true : !dryrunEnabled;
+  const hasApprovedPlans = approvedPlans.length > 0;
+  const canRunNow = hasApprovedPlans && Boolean(selectedPlanId) && !mutating;
+
+  const runNowError = runNowMutation.error;
+  const runNowErrorMessage =
+    runNowError instanceof ApiError && runNowError.status === 409
+      ? runNowConflictMessage(runNowError)
+      : runNowError instanceof ApiError && runNowError.status === 404
+        ? "選択したプランが見つかりません。 一覧を更新して再選択してください。"
+        : runNowError instanceof ApiError && runNowError.status === 503
+          ? "音楽生成ランナーが未配線です。 backend の起動状態を確認してください。"
+          : runNowError
+            ? "即時生成の開始に失敗しました。 時間をおいて再試行してください。"
+            : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -210,6 +287,106 @@ export default function SchedulerPage(): React.JSX.Element {
               {modeMutation.isError ? (
                 <p className="text-sm text-danger">
                   モード切替に失敗しました。 時間をおいて再試行してください。
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="scheduler-run-now-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-slate-300">
+                <Play className="h-4 w-4" aria-hidden="true" />
+                今すぐ生成
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-slate-400">
+                承認済みの日次プランを選び、 定時 cron（JST 07:00 / 19:00）を待たず音楽生成を
+                1 回起動します。 実行中は他の即時・定時実行と同時には走りません。
+              </p>
+
+              {approvedPlansQuery.isLoading ? (
+                <p className="text-sm text-slate-500">承認済みプランを読み込み中…</p>
+              ) : null}
+
+              {approvedPlansQuery.isError ? (
+                <p className="text-sm text-slate-500">
+                  承認済みプランを取得できません(未接続)。
+                </p>
+              ) : null}
+
+              {!approvedPlansQuery.isLoading &&
+              !approvedPlansQuery.isError &&
+              !hasApprovedPlans ? (
+                <p
+                  data-testid="scheduler-run-now-empty"
+                  className="text-sm text-slate-400"
+                >
+                  承認済みの日次プランがありません。{" "}
+                  <Link
+                    href="/plans"
+                    className="text-primary hover:underline"
+                    data-testid="scheduler-run-now-plans-link"
+                  >
+                    プラン一覧で承認してください
+                  </Link>
+                </p>
+              ) : null}
+
+              {hasApprovedPlans ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <label
+                      htmlFor="scheduler-run-now-plan"
+                      className="text-xs text-slate-400"
+                    >
+                      承認済みプラン
+                    </label>
+                    <select
+                      id="scheduler-run-now-plan"
+                      data-testid="scheduler-run-now-plan"
+                      value={selectedPlanId}
+                      onChange={(event) => setSelectedPlanId(event.target.value)}
+                      className="h-10 w-full rounded-md border border-white/10 bg-white/5 px-3 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      {approvedPlans.map((plan) => (
+                        <option key={plan.id} value={plan.id}>
+                          {planOptionLabel(plan)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button
+                    data-testid="scheduler-run-now-btn"
+                    variant="default"
+                    size="sm"
+                    className="sm:ml-auto"
+                    disabled={!canRunNow}
+                    onClick={() => runNowMutation.mutate(selectedPlanId)}
+                  >
+                    {runNowMutation.isPending
+                      ? "起動中…"
+                      : "今すぐ生成を開始"}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  data-testid="scheduler-run-now-btn"
+                  variant="default"
+                  size="sm"
+                  className="self-start"
+                  disabled
+                >
+                  今すぐ生成を開始
+                </Button>
+              )}
+
+              {runNowErrorMessage ? (
+                <p
+                  data-testid="scheduler-run-now-error"
+                  className="text-sm text-danger"
+                >
+                  {runNowErrorMessage}
                 </p>
               ) : null}
             </CardContent>

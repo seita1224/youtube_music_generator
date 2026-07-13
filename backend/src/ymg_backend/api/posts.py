@@ -1,18 +1,21 @@
-"""``/posts`` 業務ルータ (T0xx, contracts/backend-api.yaml ``/posts`` 系)。
+"""``/posts`` 業務ルータ (contracts/backend-api.yaml ``/posts`` 系)。
 
-3 endpoint を提供する (すべて Basic 認証必須。 配線は ``main.py`` の
+endpoint を提供する (すべて Basic 認証必須。 配線は ``main.py`` の
 ``_build_protected_router`` 配下で後段が ``include_router`` する)。
 
-- ``GET /posts``: ``status`` / ``genre`` / ``from_date`` / ``to_date`` で投稿一覧を絞り込む。
+- ``GET /posts``: ``plan_id`` / ``status`` / ``genre`` / ``from_date`` / ``to_date`` で投稿一覧を絞り込む。
 - ``GET /posts/{post_id}``: 単一投稿を返す (不在は 404)。
 - ``POST /posts/{post_id}/retry``: **失敗した** 投稿パイプラインを再実行する (ADR-0035 §3)。
-  daily_cycle の単一 post 経路を再起動するため、 post を ``pending`` に戻し、 監査ログを残し、
-  再実行を :class:`PostRetryLauncher` に委譲して即座に ``202 Accepted`` を返す。
+- ``GET /posts/{post_id}/tracks``: AudioTrack メタ一覧 (``audio_uri`` は露出せない)。
+- ``GET /posts/{post_id}/tracks/{position}/audio``: WAV を Basic 認証付き StreamingResponse で返す。
+- ``GET /posts/{post_id}/tracks/{position}/download``: 同じバイト源を attachment で返す。
 
 設計方針:
 
-- レスポンスは ORM ``Post`` を contracts の ``Post`` スキーマへ写像した
-  :class:`PostResponse` (Pydantic) で返す。 ``payload`` (JSONB) はそのまま透過する。
+- レスポンスは ORM ``Post`` / ``AudioTrack`` を contracts スキーマへ写像した Pydantic で返す。
+  ``AudioTrack.audio_uri`` は API レスポンスに含めず、再生/DL は storage ストリーム経由。
+- 音声配信は dryrun 動画配信と同方式: ``StorageAdapter.open`` のチャンク読み +
+  ``StreamingResponse``。 全読み込み (``read_bytes``) はしない。
 - 本ルータは「呼び出し側」なので状態変更後に ``session.commit()`` する
   (service 層は flush まで、 という US1 規約の境界はここで閉じる)。
 - 再実行の実体 (daily_cycle オーケストレータの組み立て) は本タスクのスコープ外
@@ -26,25 +29,41 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Final, Literal, Protocol
+from functools import lru_cache
+from typing import IO, Annotated, Any, Final, Literal, Protocol
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.logging import bind_context
 from ymg_backend.core.security import BasicAuthUser
 from ymg_backend.infrastructure.audit import write_audit_log
-from ymg_backend.infrastructure.db.models import Post
+from ymg_backend.infrastructure.db.models import AudioTrack, Post
 from ymg_backend.infrastructure.db.session import get_session
+from ymg_backend.infrastructure.storage.fsspec_wrapper import StorageAdapter
 
 router: Final = APIRouter(prefix="/posts", tags=["posts"])
 
 # contracts の post_status enum (backend-api.yaml ``/posts`` query / Post.status)。
-PostStatus = Literal["pending", "generating", "generated", "posting", "posted", "failed"]
+PostStatus = Literal[
+    "pending",
+    "generating",
+    "music_generated",
+    "generated",
+    "posting",
+    "posted",
+    "failed",
+]
+
+# contracts の acoustid_status enum (AudioTrack.acoustid_status)。
+AcoustidStatus = Literal["not_checked", "clear", "hit", "api_error"]
 
 # retry を受け付ける状態。 ADR-0035 §3 に従い「失敗した投稿の再実行」のみ許可する。
 _RETRYABLE_STATUSES: Final[frozenset[str]] = frozenset({"failed"})
@@ -54,6 +73,14 @@ _LIST_LIMIT: Final[int] = 100
 
 # from_date/to_date の終端境界計算用 (to_date を含めるため翌日 0:00 を排他上界にする)。
 _ONE_DAY: Final[timedelta] = timedelta(days=1)
+
+# WAV ストリームのチャンクサイズ (dryrun 動画配信と同値: 1 MiB)。
+_AUDIO_CHUNK_SIZE: Final[int] = 1024 * 1024
+
+_AUDIO_MEDIA_TYPE: Final[str] = "audio/wav"
+
+# TrackPositionPath: AudioTrack.position (0..5)。
+TrackPosition = Annotated[int, Path(ge=0, le=5, description="AudioTrack.position (0..5)")]
 
 
 class PostResponse(BaseModel):
@@ -85,6 +112,31 @@ class PostListResponse(BaseModel):
     """``GET /posts`` のレスポンス (contracts: ``{ items: Post[] }``)。"""
 
     items: list[PostResponse]
+
+
+class AudioTrackResponse(BaseModel):
+    """contracts ``AudioTrack`` スキーマ (``audio_uri`` は露出せない)。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    post_id: uuid.UUID
+    position: int = Field(ge=0, le=5)
+    duration_sec: int
+    bpm: int | None = None
+    music_key: str | None = None
+    subtheme: str | None = None
+    acoustid_status: AcoustidStatus
+    regenerated_count: int = 0
+    generated_at: datetime
+
+
+class AudioTrackListResponse(BaseModel):
+    """``GET /posts/{post_id}/tracks`` のレスポンス (contracts: ``{ items: AudioTrack[] }``)。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AudioTrackResponse]
 
 
 class RetryAccepted(BaseModel):
@@ -125,6 +177,19 @@ def get_retry_launcher() -> PostRetryLauncher:
     return _noop_retry_launcher
 
 
+@lru_cache(maxsize=1)
+def _build_default_storage(settings: Settings) -> StorageAdapter:
+    """settings から既定の :class:`StorageAdapter` を構築する (プロセス単位 1 個)。"""
+    return StorageAdapter(settings.storage_base_uri)
+
+
+def get_storage_adapter(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> StorageAdapter:
+    """音声配信に使う :class:`StorageAdapter` を解決する依存性 (override 可)。"""
+    return _build_default_storage(settings)
+
+
 def _normalize_genre(genre: str) -> str:
     """ジャンル絞り込み値を正規化する (前後空白除去)。 空文字は呼び出し側で除外済み。"""
     return genre.strip()
@@ -150,22 +215,102 @@ async def _load_post(session: AsyncSession, post_id: uuid.UUID) -> Post:
     return post
 
 
+async def _load_track(
+    session: AsyncSession,
+    *,
+    post_id: uuid.UUID,
+    position: int,
+) -> AudioTrack:
+    """``post_id`` + ``position`` の ``AudioTrack`` を取得する (不在は 404)。"""
+    stmt = select(AudioTrack).where(
+        AudioTrack.post_id == post_id,
+        AudioTrack.position == position,
+    )
+    track = (await session.execute(stmt)).scalar_one_or_none()
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"track position {position} for post {post_id} not found",
+        )
+    return track
+
+
+def _ensure_audio_uri_contained(storage: StorageAdapter, audio_uri: str) -> None:
+    """``audio_uri`` が storage base 配下であることを保証する (逸脱は 404)。
+
+    DB 改ざんや不正 worker 応答で絶対 URI が差し込まれても、 設定外の任意ファイルを
+    読ませない。 詳細パスはレスポンスに出さない。
+    """
+    if not storage.is_under_base(audio_uri):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="audio object is missing or not readable",
+        )
+
+
+async def _stream_file(storage: StorageAdapter, uri: str) -> AsyncIterator[bytes]:
+    """ファイルを固定チャンクで読み出す async generator (dryrun 動画配信と同方式)。
+
+    ``StorageAdapter.open`` の同期ハンドルを ``with`` で確実にクローズしつつ、 1MiB ずつ
+    yield する。 全読み込み (``read_bytes``) を避けてメモリ常駐を抑える。
+    """
+    handle: IO[Any]
+    with storage.open(uri, "rb") as handle:
+        for chunk in _iter_chunks(handle):
+            yield chunk
+
+
+def _iter_chunks(handle: IO[Any]) -> Iterator[bytes]:
+    """ファイルハンドルから ``_AUDIO_CHUNK_SIZE`` 単位で読み出す同期イテレータ。"""
+    while True:
+        chunk = handle.read(_AUDIO_CHUNK_SIZE)
+        if not chunk:
+            break
+        yield chunk
+
+
+def _audio_streaming_response(
+    storage: StorageAdapter,
+    *,
+    audio_uri: str,
+    position: int,
+    as_attachment: bool,
+) -> StreamingResponse:
+    """WAV を StreamingResponse で返す (再生 / ダウンロード共用)。
+
+    オブジェクト不在は呼び出し側で 404 済み。 ``as_attachment=True`` のとき
+    ``Content-Disposition: attachment; filename="track-{position}.wav"`` を付与する。
+    """
+    headers: dict[str, str] = {}
+    if as_attachment:
+        headers["Content-Disposition"] = f'attachment; filename="track-{position}.wav"'
+    return StreamingResponse(
+        _stream_file(storage, audio_uri),
+        media_type=_AUDIO_MEDIA_TYPE,
+        headers=headers,
+    )
+
+
 @router.get("", response_model=PostListResponse, summary="List posts")
 async def list_posts(
     user: BasicAuthUser,
     session: Annotated[AsyncSession, Depends(get_session)],
+    plan_id: Annotated[uuid.UUID | None, Query()] = None,
     status_filter: Annotated[PostStatus | None, Query(alias="status")] = None,
     genre: Annotated[str | None, Query()] = None,
     from_date: Annotated[date | None, Query()] = None,
     to_date: Annotated[date | None, Query()] = None,
 ) -> PostListResponse:
-    """投稿一覧を ``status`` / ``genre`` / ``from_date`` / ``to_date`` で絞り込む。
+    """投稿一覧を ``plan_id`` / ``status`` / ``genre`` / ``from_date`` / ``to_date`` で絞り込む。
 
-    ``from_date`` / ``to_date`` は ``created_at`` の日付境界に対する閉区間で判定する
-    (``from_date`` 当日 0:00 以降、 ``to_date`` の翌日 0:00 未満)。 新しい順で返す。
+    ``plan_id`` は Plan 詳細の音声一覧用。 ``from_date`` / ``to_date`` は ``created_at`` の
+    日付境界に対する閉区間で判定する (``from_date`` 当日 0:00 以降、 ``to_date`` の翌日
+    0:00 未満)。 新しい順で返す。
     """
     del user  # 認証のみ目的 (ユーザー名は本 endpoint では未使用)。
     stmt = select(Post)
+    if plan_id is not None:
+        stmt = stmt.where(Post.plan_id == plan_id)
     if status_filter is not None:
         stmt = stmt.where(Post.status == status_filter)
     if genre is not None and (normalized := _normalize_genre(genre)):
@@ -253,11 +398,118 @@ async def retry_post(
     )
 
 
+@router.get(
+    "/{post_id}/tracks",
+    response_model=AudioTrackListResponse,
+    summary="List audio tracks for a post",
+    responses={404: {"description": "Post が存在しない"}},
+)
+async def list_post_tracks(
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    post_id: uuid.UUID,
+) -> AudioTrackListResponse:
+    """AudioTrack メタを position 昇順で返す (``audio_uri`` は露出せない)。
+
+    Post 不在は 404。 トラック未生成でも空 ``items`` を 200 で返す。
+    """
+    del user
+    await _load_post(session, post_id)
+    stmt = (
+        select(AudioTrack).where(AudioTrack.post_id == post_id).order_by(AudioTrack.position.asc())
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return AudioTrackListResponse(items=[AudioTrackResponse.model_validate(row) for row in rows])
+
+
+@router.get(
+    "/{post_id}/tracks/{position}/audio",
+    summary="Stream track WAV for in-browser playback",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {_AUDIO_MEDIA_TYPE: {}},
+            "description": "WAV byte stream (chunked).",
+        },
+        404: {"description": "Post / track / オブジェクトが存在しない"},
+    },
+)
+async def stream_post_track_audio(
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    storage: Annotated[StorageAdapter, Depends(get_storage_adapter)],
+    post_id: uuid.UUID,
+    position: TrackPosition,
+) -> StreamingResponse:
+    """StorageAdapter 経由で WAV を StreamingResponse で返す (Basic 認証必須)。
+
+    ``audio_uri`` はレスポンスに含めない。 Post / track / オブジェクト不在は 404。
+    """
+    del user
+    await _load_post(session, post_id)
+    track = await _load_track(session, post_id=post_id, position=position)
+    _ensure_audio_uri_contained(storage, track.audio_uri)
+    if not storage.exists(track.audio_uri):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"audio object for post {post_id} position {position} is missing",
+        )
+    return _audio_streaming_response(
+        storage,
+        audio_uri=track.audio_uri,
+        position=position,
+        as_attachment=False,
+    )
+
+
+@router.get(
+    "/{post_id}/tracks/{position}/download",
+    summary="Download track WAV (Content-Disposition attachment)",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {_AUDIO_MEDIA_TYPE: {}},
+            "description": "WAV download with Content-Disposition attachment.",
+        },
+        404: {"description": "Post / track / オブジェクトが存在しない"},
+    },
+)
+async def download_post_track_audio(
+    user: BasicAuthUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    storage: Annotated[StorageAdapter, Depends(get_storage_adapter)],
+    post_id: uuid.UUID,
+    position: TrackPosition,
+) -> StreamingResponse:
+    """再生用と同じバイト源を ``Content-Disposition: attachment`` で返す。
+
+    Post / track / オブジェクト不在は 404。
+    """
+    del user
+    await _load_post(session, post_id)
+    track = await _load_track(session, post_id=post_id, position=position)
+    _ensure_audio_uri_contained(storage, track.audio_uri)
+    if not storage.exists(track.audio_uri):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"audio object for post {post_id} position {position} is missing",
+        )
+    return _audio_streaming_response(
+        storage,
+        audio_uri=track.audio_uri,
+        position=position,
+        as_attachment=True,
+    )
+
+
 __all__ = [
+    "AudioTrackListResponse",
+    "AudioTrackResponse",
     "PostListResponse",
     "PostResponse",
     "PostRetryLauncher",
     "RetryAccepted",
     "get_retry_launcher",
+    "get_storage_adapter",
     "router",
 ]

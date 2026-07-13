@@ -1,6 +1,6 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
-import { BASIC_AUTH } from "./helpers";
+import { loginViaApi } from "./helpers";
 
 // 画面10 ジャンル管理の critical user flow(US3 / FR-037・FR-038)。
 //  - ジャンル辞書を role 別に一覧(GET /genres)
@@ -109,9 +109,8 @@ async function mockGenresApi(page: Page): Promise<void> {
 }
 
 test.describe("[FR-037/FR-038] ジャンル管理画面 (US3)", () => {
-  test.use({ httpCredentials: BASIC_AUTH });
-
   test.beforeEach(async ({ page }) => {
+    await loginViaApi(page);
     await mockGenresApi(page);
   });
 

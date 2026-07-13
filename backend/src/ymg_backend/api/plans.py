@@ -63,7 +63,9 @@ _APPROVED_STATUS: Final[str] = "approved"
 _JST: Final[timezone] = timezone(timedelta(hours=9))
 
 PlanCycle = Literal["daily", "weekly"]
-PlanStatus = Literal["generated", "approved", "executing", "completed", "failed"]
+PlanStatus = Literal[
+    "generated", "approved", "executing", "music_generated", "completed", "failed"
+]
 
 
 # ---------------------------------------------------------------------------

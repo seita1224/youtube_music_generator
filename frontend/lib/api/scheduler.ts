@@ -5,7 +5,7 @@
 // 手書きで一致させる(health.ts / dryrun.ts と同方針)。
 // US3(dryrun/投稿モード切替)と US4(緊急停止)で共用する。
 
-import { apiGet, apiPost, apiPut } from "@/lib/api/client";
+import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api/client";
 
 export interface SchedulerState {
   readonly enabled: boolean;
@@ -66,4 +66,63 @@ export async function panicStop(
     window_hours: windowHours,
     set_private: setPrivate,
   });
+}
+
+// POST /scheduler/run-now の 202 レスポンス。
+export interface RunNowResponse {
+  readonly accepted: boolean;
+  readonly run_id: string; // uuid = job_history.id
+  readonly plan_id: string; // uuid
+  readonly target_date: string; // date YYYY-MM-DD
+}
+
+/**
+ * 承認済み Daily Plan の音楽生成を即時 1 回起動する(cron 待ち回避)。
+ * planId は status=approved 必須。 長時間処理はバックグラウンド(202 + run_id)。
+ * 409: 未承認 Plan、 または別の music_generation が running(single-flight)。
+ */
+export async function runNow(planId: string): Promise<RunNowResponse> {
+  return apiPost<RunNowResponse>("/scheduler/run-now", { plan_id: planId });
+}
+
+/**
+ * run-now の 409 detail を UX 文言へ写像する。
+ * busy: 「別の音楽生成が実行中」 / not-approved: 「Plan is not approved」。
+ */
+export function runNowConflictMessage(error: ApiError): string {
+  const detail = extractApiDetail(error.message);
+  if (/Plan is not approved|not approved/i.test(detail)) {
+    return "選択したプランは承認済みではありません。 プラン一覧で承認してから再試行してください。";
+  }
+  if (/別の音楽生成が実行中|busy|already running/i.test(detail)) {
+    return "別の音楽生成が実行中です。 完了を待ってから再試行してください。";
+  }
+  // detail が取れない 409 は single-flight を既定とする(運用上多い方)。
+  return "別の音楽生成が実行中です。 完了を待ってから再試行してください。";
+}
+
+/** ApiError.message(生レスポンス本文)から FastAPI detail 文字列を取り出す。 */
+function extractApiDetail(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      if (typeof record.detail === "string") {
+        return record.detail;
+      }
+      if (typeof record.message === "string") {
+        return record.message;
+      }
+    }
+  } catch {
+    // 非 JSON はそのまま使う。
+  }
+  return trimmed;
 }

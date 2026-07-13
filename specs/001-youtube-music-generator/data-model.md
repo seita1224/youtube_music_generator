@@ -1,6 +1,6 @@
 # Data Model — YouTube 音楽投稿自動化システム
 
-> PostgreSQL 16 + pgvector 拡張。 SQLAlchemy 2.x + Alembic で実装。 ADR-0010 / ADR-0012 / ADR-0024 / ADR-0025 / ADR-0028 / ADR-0031 / ADR-0032 を反映。
+> PostgreSQL 16 + pgvector 拡張。 SQLAlchemy 2.x + Alembic で実装。 ADR-0010 / ADR-0011 / ADR-0012 / ADR-0023 / ADR-0024 / ADR-0025 / ADR-0028 / ADR-0031 / ADR-0032 / ADR-0006 を反映。
 
 ## ER 構造(概念図)
 
@@ -24,7 +24,8 @@ videos ────── analytics_daily (時系列)
 oauth_credentials       (Fernet 暗号化)
 usage_log               (LLM 呼び出し追跡)
 model_pricing           (LLM 単価表)
-job_history             (cron job 実行履歴)
+job_history             (実行単位 = API run_id)
+  └── job_step_events   (工程イベント正本)
 dryrun_outputs          (state 管理)
 app_state               (scheduler_enabled 等)
 ```
@@ -33,8 +34,14 @@ app_state               (scheduler_enabled 等)
 
 ```sql
 CREATE TYPE plan_cycle AS ENUM ('daily', 'weekly');
-CREATE TYPE plan_status AS ENUM ('generated', 'approved', 'executing', 'completed', 'failed');
-CREATE TYPE post_status AS ENUM ('pending', 'generating', 'generated', 'posting', 'posted', 'failed');
+CREATE TYPE plan_status AS ENUM (
+  'generated', 'approved', 'executing', 'music_generated', 'completed', 'failed'
+);
+CREATE TYPE post_status AS ENUM (
+  'pending', 'generating', 'music_generated', 'generated', 'posting', 'posted', 'failed'
+);
+-- job_history.trigger は PG ENUM ではなく TEXT + CHECK (ADR-0036)。
+-- 許容値: NULL | 'cron' | 'run_now' (music_generation 以外は NULL)。
 CREATE TYPE gpu_job_type AS ENUM ('music', 'image');
 CREATE TYPE gpu_job_status AS ENUM ('queued', 'running', 'succeeded', 'failed');
 CREATE TYPE dryrun_state AS ENUM ('pending', 'approved', 'rejected', 'auto_expired', 'posted');
@@ -44,6 +51,10 @@ CREATE TYPE youtube_privacy_status AS ENUM ('public', 'unlisted', 'private', 'de
 CREATE TYPE llm_provider AS ENUM ('openai', 'anthropic', 'ollama');
 CREATE TYPE llm_auth_mode AS ENUM ('api_key', 'codex_oauth');
 ```
+
+> 音楽専用実行(ADR-0006): Plan `approved → executing → music_generated|failed`、
+> Post `pending → generating → music_generated|failed`。
+> `completed` / `generated` / `posting` / `posted` はフル日次(動画・投稿)経路用に残す。
 
 ## Tables
 
@@ -257,6 +268,20 @@ CREATE TABLE oauth_credentials (
 );
 ```
 
+### `llm_provider_secrets` — LLM API key (Fernet, ADR-0019 / ADR-0012)
+
+```sql
+CREATE TABLE llm_provider_secrets (
+  provider             TEXT PRIMARY KEY,          -- 'openai' | 'anthropic' のみ
+  api_key_encrypted    BYTEA NOT NULL,            -- Fernet ciphertext (write-only)
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (provider IN ('openai', 'anthropic'))
+);
+```
+
+実行時の API key 解決順位: **環境変数非空 > 本テーブル > none**。
+Ollama は対象外。 GET API は `credential_source` / `configured` のみ返し、平文・マスクは出さない。
+
 ### `usage_log` — LLM 呼び出し記録 (ADR-0024)
 
 ```sql
@@ -337,25 +362,58 @@ CREATE INDEX idx_comments_video_id     ON comments (youtube_video_id);
 CREATE INDEX idx_comments_published_at ON comments (published_at DESC);
 ```
 
-### `job_history` — cron / scheduler 実行履歴 (ADR-0023, ADR-0028)
+### `job_history` — 実行単位(API `run_id`) (ADR-0011, ADR-0023, ADR-0028)
 
 ```sql
 CREATE TABLE job_history (
-  id                UUID PRIMARY KEY,
-  job_name          TEXT NOT NULL,              -- 'daily_cycle' / 'weekly_cycle' / 'dryrun_retention' 等
-  status            TEXT NOT NULL,              -- 'running' / 'succeeded' / 'failed'
+  id                UUID PRIMARY KEY,           -- API の run_id
+  job_name          TEXT NOT NULL,              -- 'music_generation' / 'weekly_cycle' / 'dryrun_retention' 等
+  status            TEXT NOT NULL,              -- 'running' / 'succeeded' / 'failed' / 'skipped'
+  trigger           TEXT,                       -- music_generation: 'cron' | 'run_now' (他は NULL)
+  target_date       DATE,                       -- music_generation の対象日(JST)
   context_type      TEXT,                       -- 'plan' / 'post' 等
-  context_id        UUID,
+  context_id        UUID,                       -- 対象 Plan.id 等
   error_category    error_category,
   error_message     TEXT,
   started_at        TIMESTAMPTZ NOT NULL,
   finished_at       TIMESTAMPTZ,
-  duration_ms       INT
+  duration_ms       INT,
+  CONSTRAINT ck_job_history_trigger
+    CHECK (trigger IS NULL OR trigger IN ('cron', 'run_now'))
 );
 
 CREATE INDEX idx_job_history_job_name   ON job_history (job_name);
 CREATE INDEX idx_job_history_started_at ON job_history (started_at DESC);
 CREATE INDEX idx_job_history_status     ON job_history (status);
+CREATE INDEX idx_job_history_target_date ON job_history (target_date DESC);
+CREATE INDEX idx_job_history_job_name_started_at ON job_history (job_name, started_at DESC);
+
+-- music_generation の single-flight(ADR-0011): cron / run_now 共有
+CREATE UNIQUE INDEX uq_job_history_music_generation_running
+  ON job_history (job_name)
+  WHERE job_name = 'music_generation' AND status = 'running';
+```
+
+### `job_step_events` — 工程イベント正本 (ADR-0023)
+
+```sql
+CREATE TABLE job_step_events (
+  id                UUID PRIMARY KEY,
+  run_id            UUID NOT NULL REFERENCES job_history(id) ON DELETE CASCADE,
+  step              TEXT NOT NULL,              -- 'cycle' / 'post' / 'music' 等
+  status            TEXT NOT NULL,              -- 'running' / 'succeeded' / 'failed'
+  genre             TEXT,                       -- genres.name 参照(任意)
+  context_type      TEXT,                       -- 'plan' / 'post' 等
+  context_id        UUID,
+  error_category    error_category,
+  error_message     TEXT,
+  payload           JSONB,                      -- 補助 context(任意)
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_job_step_events_run_id     ON job_step_events (run_id, created_at);
+CREATE INDEX idx_job_step_events_step       ON job_step_events (step);
+CREATE INDEX idx_job_step_events_status     ON job_step_events (status);
 ```
 
 ### `app_state` — グローバル状態 (ADR-0031)
@@ -370,8 +428,9 @@ CREATE TABLE app_state (
 -- 初期 seed
 INSERT INTO app_state (key, value) VALUES
   ('scheduler_enabled', 'false'::jsonb),           -- ADR-0031: reboot 後は手動 enable
-  ('llm_provider', '"openai"'::jsonb),             -- ADR-0019
+  ('llm_provider', '"ollama"'::jsonb),             -- ADR-0019: clean install 既定
   ('llm_auth_mode', '"api_key"'::jsonb),
+  ('llm_model', '"qwen2.5:3b"'::jsonb),           -- ADR-0019: ollama 既定モデル
   ('monthly_budget_usd', '50'::jsonb),             -- ADR-0024
   ('dryrun_enabled', 'true'::jsonb);               -- 初期は dryrun 推奨
 ```
@@ -427,12 +486,19 @@ DB レベル制約と Pydantic レベル制約の責務分担:
 - バージョン: `alembic/versions/<rev>_*.py`
 - down migration は書かない(ADR-0031)、 後退時は手動 SQL
 - `make migrate` 実行前に自動 `pg_dump`(`backups/pre-migrate-<ts>.sql`)
-- 初期マイグレーション(`001_initial.py`): 全 ENUM + 全テーブル + seed(`genres` × 6, `app_state` 4 件, `model_pricing` 初期単価)
+- 初期マイグレーション(`001_initial.py`): 全 ENUM + 全テーブル + seed(`genres` × 6, `app_state` 6 件 [llm_provider/llm_auth_mode/llm_model 含む], `model_pricing` 初期単価)
+- LLM credential / model seed (`005_llm_provider_secrets.py`): `llm_provider_secrets` テーブル追加。 既存 DB 向けに `llm_model` を **未設定時のみ** `qwen2.5:3b` で seed (`ON CONFLICT DO NOTHING`)
+- LLM 既定修復 (`006_llm_defaults_repair.py`): 先に `codex_oauth` → `api_key`。 その後 001 openai + 005 qwen + api_key の三重一致のみ `ollama` へ修復 (`openai + qwen + codex_oauth` も coherent な `ollama + qwen + api_key` へ到達)。 **意図的な provider/model 選択は上書きしない**
+- **down migration**: 運用では書かない (ADR-0031)。 secrets を含む行の downgrade は復元不可のため禁止
+- **FERNET_KEY ローテーション**: 再暗号化パスが無い限り実施しない (本スコープ外)
+- 音楽生成実行基盤(`003_music_generation_jobs.py`): `plan_status` / `post_status` に `music_generated`、`job_history.trigger` (TEXT+CHECK) / `target_date`、`job_step_events`、music_generation single-flight partial UNIQUE
+- スキーマ整合(`004_job_history_schema_align.py`): `trigger` NULL 許容、`job_step_events.payload`、`idx_job_history_target_date` / step・status / `(job_name, started_at DESC)` (ADR-0036)
 
 ## インデックス戦略まとめ
 
 - 時系列クエリ: `posts.posted_at DESC` / `analytics_daily.metric_date DESC` / `usage_log.created_at DESC` / `audit_log.created_at DESC`
 - 状態フィルタ: `posts.status` / `dryrun_outputs.state` / `gpu_jobs.status` / `videos.privacy_status` / `job_history.status`
+- 実行追跡: `job_history.id(=run_id)` / `job_step_events.run_id` / single-flight partial UNIQUE
 - 外部 ID 検索: `posts.youtube_video_id` / `audio_tracks.fingerprint_hash`
 - 多次元: `usage_log.(context_type, context_id)`(コスト集約用)
 
@@ -448,7 +514,7 @@ DB レベル制約と Pydantic レベル制約の責務分担:
 | 動画ファイル(dryrun) | fsspec | state=approved/rejected → 即削除、 pending → 7 日後 auto_expired + 削除 |
 | `usage_log` / `model_pricing` | DB | 永続 |
 | `analytics_daily` / `comments` | DB | 永続(コスト軽微) |
-| `job_history` | DB | 90 日 retention(別ジョブで削除) |
+| `job_history` / `job_step_events` | DB | 90 日 retention(別ジョブで削除、 cascade) |
 | `audit_log` | DB | 永続(コンプラ監査) |
 | Fernet 鍵 | `.env`(host) | バックアップ対象外(ADR-0026 防衛線) |
 

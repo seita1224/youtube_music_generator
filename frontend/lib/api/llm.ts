@@ -1,32 +1,44 @@
-// backend `/llm` の型付きクライアント(contracts/backend-api.yaml の
-// LlmProviderConfig / LlmUsage、 ADR-0019 / ADR-0024)。
+// backend `/llm` の型付きクライアント(contracts/backend-api.yaml、 ADR-0019 / ADR-0024)。
 //
-// 型は schema.ts 生成(`npm run gen:api`)には依存せず、 contract schema に
-// 手書きで一致させる(dryrun.ts / scheduler.ts / analytics.ts と同方針)。
-// GET /llm/providers は配列直返し(ラッパ無し)。 PUT /llm/providers は
-// {provider, auth_mode} を受け、 不正組合せ(anthropic + codex_oauth など)は
-// ApiError(status=400) を throw する。 GET /llm/usage は月次コスト集計。
-//
-// 注意: active provider の model は app_state に保存されず provider 既定固定のため、
-// PUT body に model は含めない(contract `required: [provider, auth_mode]`)。 model は
-// 画面では参考表示(read-only)に留める。
+// GET /llm/providers は { active, providers } を返す。 PUT は provider/auth_mode/model を
+// app_state に永続化する。 credential は write-only (平文・マスクは応答に出ない)。
+// Codex OAuth は未配線のため PUT が 422。 env が SoT のとき credential 操作は 409。
 
-import { apiGet, apiPut } from "@/lib/api/client";
+import { apiDelete, apiGet, apiPut } from "@/lib/api/client";
 
 export type LlmProvider = "openai" | "anthropic" | "ollama";
 export type LlmAuthMode = "api_key" | "codex_oauth";
+export type LlmCredentialSource = "env" | "db" | "none" | "n/a";
+export type LlmSecretProvider = "openai" | "anthropic";
 
-/** 各 provider の設定可否 + 選択肢(GET /llm/providers の 1 要素)。 */
+/** API key 最大長 (backend / OpenAPI と同一。入力 DoS 防止)。 */
+export const LLM_API_KEY_MAX_LENGTH = 2048;
+
+/** 各 provider の設定可否 + 選択肢 + credential メタデータ。 */
 export interface LlmProviderConfig {
   readonly provider: LlmProvider;
-  // 対応 API key/接続が設定済みか(openai/anthropic は key 非空、 ollama は常に true)。
   readonly available: boolean;
   readonly auth_modes: readonly LlmAuthMode[];
-  // 選択 provider の対応モデル(contract optional)。 app_state 非保存=参考表示用。
-  readonly models?: readonly string[];
+  readonly models: readonly string[];
+  readonly credential_source: LlmCredentialSource;
+  readonly credential_configured: boolean;
+  readonly unsupported_auth_modes?: readonly LlmAuthMode[];
 }
 
-/** provider 別の当月コスト/トークン内訳(LlmUsage.by_provider の値)。 */
+/** 現在 active な provider 設定。 */
+export interface LlmActiveState {
+  readonly provider: LlmProvider;
+  readonly auth_mode: LlmAuthMode;
+  readonly model: string;
+}
+
+/** GET /llm/providers のレスポンス。 */
+export interface LlmSettings {
+  readonly active: LlmActiveState;
+  readonly providers: readonly LlmProviderConfig[];
+}
+
+/** provider 別の当月コスト/トークン内訳。 */
 export interface LlmProviderByUsage {
   readonly cost_usd: number;
   readonly prompt_tokens: number;
@@ -34,45 +46,84 @@ export interface LlmProviderByUsage {
   readonly completion_tokens: number;
 }
 
-/** 月次 LLM 使用量 + 予算進捗(GET /llm/usage)。 */
+/** 月次 LLM 使用量 + 予算進捗。 */
 export interface LlmUsage {
-  readonly month: string; // YYYY-MM
+  readonly month: string;
   readonly total_cost_usd: number;
   readonly budget_usd: number;
-  readonly budget_pct: number; // total / budget * 100(budget=0 は 0)
+  readonly budget_pct: number;
   readonly by_provider: Readonly<Record<string, LlmProviderByUsage>>;
 }
 
-/** PUT /llm/providers の body。 contract `required: [provider, auth_mode]`。 */
+/** PUT /llm/providers の body。 */
 export interface SetProviderBody {
   readonly provider: LlmProvider;
   readonly auth_mode: LlmAuthMode;
+  readonly model: string;
 }
 
-/** provider 設定の選択肢一覧を取得する(配列直返し、 ラッパ無し)。 */
+/** PUT /llm/providers のレスポンス。 */
+export interface LlmProviderState {
+  readonly provider: LlmProvider;
+  readonly auth_mode: LlmAuthMode;
+  readonly model: string;
+}
+
+/** credential 書込/削除後のメタデータのみ。 */
+export interface LlmCredentialState {
+  readonly provider: LlmSecretProvider;
+  readonly credential_source: LlmCredentialSource;
+  readonly credential_configured: boolean;
+}
+
+/** LLM 設定(active + providers)を取得する。 */
+export async function getLlmSettings(): Promise<LlmSettings> {
+  return apiGet<LlmSettings>("/llm/providers");
+}
+
+/** @deprecated getLlmSettings を使う。 互換のため providers 配列のみ返す。 */
 export async function getProviders(): Promise<LlmProviderConfig[]> {
-  return apiGet<LlmProviderConfig[]>("/llm/providers");
+  const settings = await getLlmSettings();
+  return [...settings.providers];
 }
 
 /**
- * active な LLM provider を切り替える(ADR-0019)。
+ * active な LLM provider / model を切り替える。
  *
- * 不正組合せ(例: anthropic + codex_oauth、 FR-022)は backend が 400 を返し、
- * client は ApiError(status=400) を throw する → UI で組合せエラー表示。
+ * codex_oauth は 422、 不正 model は 422、 anthropic + 非 api_key は 400。
  */
 export async function setProvider(
   provider: LlmProvider,
   authMode: LlmAuthMode,
-): Promise<void> {
-  const body: SetProviderBody = { provider, auth_mode: authMode };
-  return apiPut<void>("/llm/providers", body);
+  model: string,
+): Promise<LlmProviderState> {
+  const body: SetProviderBody = {
+    provider,
+    auth_mode: authMode,
+    model,
+  };
+  return apiPut<LlmProviderState>("/llm/providers", body);
 }
 
-/**
- * 月次 LLM 使用量を取得する(ADR-0024)。
- *
- * @param month 集計対象月 `YYYY-MM`(未指定なら backend 既定=当月 UTC)。
- */
+/** API key を write-only で設定/置換する。 env SoT 時は 409。 前後空白は trim。 */
+export async function setCredential(
+  provider: LlmSecretProvider,
+  apiKey: string,
+): Promise<LlmCredentialState> {
+  return apiPut<LlmCredentialState>("/llm/credentials", {
+    provider,
+    api_key: apiKey.trim(),
+  });
+}
+
+/** DB 保存の API key のみ削除する。 env SoT 時は 409。 */
+export async function clearCredential(
+  provider: LlmSecretProvider,
+): Promise<LlmCredentialState> {
+  return apiDelete<LlmCredentialState>(`/llm/credentials/${provider}`);
+}
+
+/** 月次 LLM 使用量を取得する。 */
 export async function getUsage(month?: string): Promise<LlmUsage> {
   return apiGet<LlmUsage>(month ? `/llm/usage?month=${month}` : "/llm/usage");
 }

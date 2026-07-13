@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     admin_password: SecretStr = Field(default=SecretStr(""))
 
     # --- LLM Provider (ADR-0019) ---
-    llm_provider: LLMProvider = Field(default="openai")
+    llm_provider: LLMProvider = Field(default="ollama")
     llm_auth_mode: LLMAuthMode = Field(default="api_key")
     openai_api_key: SecretStr = Field(default=SecretStr(""))
     anthropic_api_key: SecretStr = Field(default=SecretStr(""))
@@ -86,15 +86,28 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_llm_auth_mode(self) -> Settings:
-        """codex_oauth は OpenAI のみサポート (ADR-0019)。
+        """codex_oauth は未配線のため起動時に拒否 (ADR-0019)。
 
         Anthropic / Ollama は API key 認証のみ。 不整合な組み合わせは
         起動時に拒否する (.env.example §LLM_AUTH_MODE 参照)。
         """
-        if self.llm_auth_mode == "codex_oauth" and self.llm_provider != "openai":
+        if self.llm_auth_mode == "codex_oauth":
             raise ValueError(
-                f"llm_auth_mode='codex_oauth' は provider='openai' のみサポート対象です "
-                f"(指定された provider='{self.llm_provider}')。"
+                "llm_auth_mode='codex_oauth' は未実装のため使用できません。"
+                " auth_mode='api_key' を使用してください。"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_admin_password(self) -> Settings:
+        """ADMIN_PASSWORD 空文字は起動時拒否 (ADR-0013)。
+
+        空白のみも空とみなす。 テストは非空の ``admin_password`` を明示する。
+        """
+        if not self.admin_password.get_secret_value().strip():
+            raise ValueError(
+                "ADMIN_PASSWORD must be a non-empty string "
+                "(set ADMIN_PASSWORD in the environment or .env)."
             )
         return self
 

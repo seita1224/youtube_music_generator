@@ -1,7 +1,7 @@
 # ADR-0011: スケジューラ = APScheduler(バックエンド常駐プロセス内)
 
 - **ステータス:** Accepted
-- **日付:** 2026-05-25
+- **日付:** 2026-05-25 (改訂: 2026-07-11 — 承認 Plan 実行と single-flight を固定)
 - **決定者:** @seita
 - **タグ:** backend, ops
 
@@ -13,6 +13,7 @@
 - バックエンドは管理UI への SSE 配信のため常駐プロセスが必要(ADR-0001)
 - 日次/週次の単純なスケジュールに高度な分散ジョブ機能は不要
 - 1人運用、GPU マシン同居の前提
+- 音楽専用実行(ADR-0006)では、即時実行と定時実行が同時に走ると GPU / DB 状態が壊れる
 
 ## 決定
 
@@ -24,6 +25,18 @@
 - ジョブ実行はジャンル単位で分割し、1ジャンル失敗で他は継続(../requirements.md §失敗時の挙動 と整合)
 - バックエンドプロセス障害時はスケジューラも止まる → 失敗は Slack 通知のみ、人間判断で再起動
 
+### 音楽生成ジョブ(`job_name='music_generation'`)の起動契約
+
+- **承認済み Plan のみ実行する。** `POST /scheduler/run-now` は `plan_id` を受け、`plans.status='approved'` 以外は 409
+- **target_date だけで新規 Plan を自動生成して起動する挙動は廃止する**
+- **定時(cron)と即時(run_now)は同じ予約サービスを共有**し、同一の single-flight 制約に従う
+- 実行予約時に `job_history(status='running')` を commit し、その `id` を API の `run_id` とする
+- DB 制約: `job_name='music_generation' AND status='running'` の部分 UNIQUE index で、プロセス内ロックに依存せず二重起動を拒否する
+  - 即時実行の重複は 409「別の音楽生成が実行中」
+  - 定時実行の重複は起動せず、既存 running を尊重して skip
+- 定時実行で当日の承認済み Daily Plan が無い場合は、新規生成せず `job_history(status='skipped')` を残す
+- 起動時に孤立した `running` 行は `failed` に確定し、対応する孤立 `executing` / `generating` も失敗理由付きで整合させる
+
 ## 結果
 
 ### 良い影響
@@ -32,14 +45,17 @@
 - 管理UI からジョブ管理(一覧・手動トリガ・履歴)を統合できる
 - ジョブストアを Postgres に置くことで永続化・整合性が確保される
 - 追加プロセス管理(systemd / cron)が不要
+- cron / run-now の相互排他が DB レベルで保証され、リロード後も `run_id` で追跡できる
 
 ### 悪い影響・トレードオフ
 
 - バックエンドプロセス障害時にスケジューラも止まる
   - 緩和: バックエンドプロセス自体を systemd で起動・自動再起動設定(プロセス監視は OS に任せる)
-  - 補完: Slack 通知で人間が気づく運用
+  - 補完: Slack 通知で人間が気づく運用。孤立 running の起動時回収で状態を閉じる
 - APScheduler のジョブ実行は同一プロセス内 → 長時間処理(音楽生成 30 分)中は他ジョブをブロック
   - 対策: ジョブ内で `asyncio` を使い、必要に応じてサブプロセス(`subprocess` / `multiprocessing`)に GPU 推論を逃がす
+- 同時に 1 本しか音楽生成できない
+  - 受容: 1 GPU / 1人運用前提では妥当
 
 ### 受容したリスク
 
@@ -51,10 +67,12 @@
 - **systemd timer:** cron より柔軟で journalctl 統合。OS 監視と相性は良いが、本システムはバックエンド常駐前提なので同居の方が一貫性がある。不採用。
 - **自前スケジューラ(当初要件):** 車輪の再発明、複雑性増。不採用。
 - **Celery + beat:** 分散ワーカー前提。1台運用には過剰。不採用。
+- **プロセス内フラグのみの排他:** 再起動や複数 worker で破れる。DB 部分 UNIQUE を正とする。不採用。
 
 ## 関連
 
 - ADR-0001: バックエンド構成
-- ADR-0006: 日次/週次サイクル
-- ADR-0010: PostgreSQL(jobstore 永続化先)
+- ADR-0006: 日次/週次サイクル・音楽専用実行
+- ADR-0010: PostgreSQL(jobstore / job_history 永続化先)
+- ADR-0023: run_id・工程イベント・SSE
 - ../requirements.md §運用フロー, §失敗時の挙動

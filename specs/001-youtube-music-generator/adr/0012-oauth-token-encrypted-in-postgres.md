@@ -21,9 +21,12 @@ DB を PostgreSQL に置く前提(ADR-0010)なので、トークン保管もそ�
 
 - リフレッシュトークン・アクセストークンは **PostgreSQL の専用テーブル**(例: `oauth_credentials`)に保存
 - 値は **対称鍵暗号化**(Python `cryptography` の `Fernet` を使用)してから DB に格納
-- 対称鍵(`OAUTH_FERNET_KEY`)は **環境変数** で渡す
+- 対称鍵(`FERNET_KEY`)は **環境変数** で渡す
   - `.env` ファイルで管理、`.env` は **`.gitignore` で除外**
   - リポジトリには `.env.example`(値抜き)のみコミット
+- **同一 Fernet 鍵 / `TokenCipher` を LLM provider API key (`llm_provider_secrets`) にも再利用する** (ADR-0019)
+  - YouTube OAuth と LLM API key で鍵を分けない (1 台運用・運用単純化)
+  - LLM API key も API 応答に平文・マスクを出さない write-only 方針
 - バックアップ運用:
   - `pg_dump` ダンプには暗号化済みのトークンが含まれる(ダンプ単体では復号不能)
   - 対称鍵 `.env` は別経路でバックアップ(別ディスク・別マシン)

@@ -33,6 +33,7 @@ def _settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
         "openai_api_key": SecretStr("sk-openai"),
         "anthropic_api_key": SecretStr("sk-anthropic"),
+        "admin_password": SecretStr("test-admin-password"),
         "_env_file": None,  # .env を読み込まない (テスト隔離)
     }
     base.update(overrides)
@@ -82,15 +83,27 @@ def test_anthropic_with_subscription_is_rejected_at_startup() -> None:
 
 
 # ===========================================================================
-# 許可: openai + codex_oauth (対照)
+# 許可: openai + api_key (対照)
 # ===========================================================================
 @pytest.mark.fr("FR-021")
-def test_openai_with_codex_oauth_is_allowed() -> None:
-    """FR-021: openai + codex_oauth は許可される(対照)。"""
-    settings = _settings(llm_provider="openai", llm_auth_mode="codex_oauth")
+def test_openai_with_api_key_is_allowed() -> None:
+    """FR-021: openai + api_key は許可される(対照)。"""
+    settings = _settings(llm_provider="openai", llm_auth_mode="api_key")
 
     assert settings.llm_provider == "openai"
-    assert settings.llm_auth_mode == "codex_oauth"
+    assert settings.llm_auth_mode == "api_key"
+
+
+# ===========================================================================
+# 拒否: codex_oauth (未配線 — 全 provider)
+# ===========================================================================
+@pytest.mark.fr("FR-021")
+def test_openai_with_codex_oauth_is_rejected_at_startup() -> None:
+    """codex_oauth は未配線のため openai でも起動時に拒否する。"""
+    with pytest.raises(ValidationError) as exc_info:
+        _settings(llm_provider="openai", llm_auth_mode="codex_oauth")
+
+    assert any("codex_oauth" in str(err["msg"]) for err in exc_info.value.errors())
 
 
 @pytest.mark.fr("FR-021")
@@ -101,3 +114,17 @@ def test_api_key_auth_is_allowed_for_all_providers(provider: str) -> None:
 
     assert settings.llm_provider == provider
     assert settings.llm_auth_mode == "api_key"
+
+
+def test_empty_admin_password_is_rejected_at_startup() -> None:
+    """ADMIN_PASSWORD 空文字は Settings 構築時に ValidationError。"""
+    with pytest.raises(ValidationError) as exc_info:
+        _settings(admin_password=SecretStr(""))
+
+    assert any("ADMIN_PASSWORD" in str(err["msg"]) for err in exc_info.value.errors())
+
+
+def test_whitespace_only_admin_password_is_rejected() -> None:
+    """空白のみの ADMIN_PASSWORD も拒否する。"""
+    with pytest.raises(ValidationError):
+        _settings(admin_password=SecretStr("   "))

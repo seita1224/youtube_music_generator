@@ -3,6 +3,7 @@
 import { Bell, Settings } from "lucide-react";
 import { usePathname } from "next/navigation";
 
+import { LogoutButton } from "@/components/admin/logout-button";
 import { PRIMARY_NAV_ITEMS, SECONDARY_NAV_ITEMS } from "@/components/admin/nav-items";
 
 // canonical ヘッダー(screen-spec.md §1)。 上部固定・高さ 64px・backdrop-blur。
@@ -30,7 +31,13 @@ function titleForPath(pathname: string): string {
   return match?.label ?? FALLBACK_TITLE;
 }
 
-export function Header(): React.JSX.Element {
+interface HeaderProps {
+  readonly username?: string;
+}
+
+export function Header({
+  username = "admin",
+}: HeaderProps): React.JSX.Element {
   const pathname = usePathname() ?? "/";
   const title = titleForPath(pathname);
   const subtitle = SUBTITLES[pathname];
@@ -57,14 +64,16 @@ export function Header(): React.JSX.Element {
         >
           <Settings className="h-4 w-4" aria-hidden="true" />
         </button>
-        <span className="text-sm font-medium text-slate-300">admin</span>
-        <a
-          href="/api/backend/logout"
-          className="text-sm text-slate-400 transition-colors hover:text-danger"
-          title="Basic 認証セッションを破棄(ベストエフォート)"
+        <span
+          className="text-sm font-medium text-slate-300"
+          data-testid="header-username"
         >
-          ログアウト
-        </a>
+          {username}
+        </span>
+        <LogoutButton
+          className="text-sm text-slate-400 transition-colors hover:text-danger disabled:opacity-50"
+          testId="header-logout"
+        />
       </div>
     </header>
   );

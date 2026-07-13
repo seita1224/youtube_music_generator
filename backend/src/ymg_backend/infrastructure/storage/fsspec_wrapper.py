@@ -81,6 +81,30 @@ class StorageAdapter:
             return path_or_uri
         return self._base_uri + path_or_uri.lstrip("/")
 
+    @staticmethod
+    def _normalize_uri(uri: str) -> str:
+        """``..`` 等を畳み、比較用に正規化した URI 文字列を返す。"""
+        if not _has_protocol(uri):
+            return os.path.normpath(uri)
+        scheme, _, rest = uri.partition(_PROTOCOL_SEP)
+        # ``file:///path`` → rest は ``/path``。 normpath は先頭スラッシュを保つ。
+        return f"{scheme}{_PROTOCOL_SEP}{os.path.normpath(rest)}"
+
+    def is_under_base(self, path_or_uri: str) -> bool:
+        """解決後 URI が設定済み ``base_uri`` 配下に収まるか判定する。
+
+        ``base_uri`` 未設定時は ``False`` (配信 API は拒否する)。
+        ``file:///base/../etc/passwd`` のような traversal も正規化して弾く。
+        """
+        if self._base_uri is None:
+            return False
+        resolved = self.resolve_uri(path_or_uri)
+        norm_resolved = self._normalize_uri(resolved)
+        norm_base = self._normalize_uri(self._base_uri.rstrip("/")) + "/"
+        if norm_resolved == norm_base.rstrip("/"):
+            return True
+        return norm_resolved.startswith(norm_base)
+
     def _fs_and_path(self, path_or_uri: str) -> tuple[Any, str]:
         """URI を解決し、fsspec の ``(filesystem, path)`` を返す。"""
         uri = self.resolve_uri(path_or_uri)

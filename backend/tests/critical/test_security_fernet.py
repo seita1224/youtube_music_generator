@@ -167,7 +167,11 @@ def test_token_cipher_accepts_fernet_instance(fernet_key: str) -> None:
 
 def test_build_cipher_from_explicit_settings(fernet_key: str) -> None:
     """明示的に渡した ``Settings.fernet_key`` から生成できる。"""
-    settings = Settings(fernet_key=SecretStr(fernet_key))
+    settings = Settings(
+        fernet_key=SecretStr(fernet_key),
+        admin_password=SecretStr("test-admin-password"),
+        _env_file=None,
+    )
     cipher = build_cipher_from_settings(settings)
 
     assert cipher.decrypt(cipher.encrypt("tok")) == "tok"
@@ -179,7 +183,11 @@ def test_build_cipher_from_settings_uses_get_settings(
     """``settings=None`` のとき ``get_settings()`` 経由で鍵を解決する。"""
     monkeypatch.setattr(
         "ymg_backend.core.security.get_settings",
-        lambda: Settings(fernet_key=SecretStr(fernet_key)),
+        lambda: Settings(
+            fernet_key=SecretStr(fernet_key),
+            admin_password=SecretStr("test-admin-password"),
+            _env_file=None,
+        ),
     )
     cipher = build_cipher_from_settings()
 
@@ -188,7 +196,11 @@ def test_build_cipher_from_settings_uses_get_settings(
 
 def test_build_cipher_from_settings_invalid_key_raises() -> None:
     """設定の ``fernet_key`` が空のとき ``FatalError`` を送出する。"""
-    settings = Settings(fernet_key=SecretStr(""))
+    settings = Settings(
+        fernet_key=SecretStr(""),
+        admin_password=SecretStr("test-admin-password"),
+        _env_file=None,
+    )
     with pytest.raises(FatalError):
         build_cipher_from_settings(settings)
 

@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "YMG — YouTube 音楽投稿自動化",
-  description: "管理 UI (LAN 内 admin, Basic 認証)",
+  description: "管理 UI (LAN 内 admin, セッション認証)",
 };
 
 // ルートレイアウト。 admin レイアウト/サイドバーは Phase 2 (T064) で (admin)/layout.tsx に実装。

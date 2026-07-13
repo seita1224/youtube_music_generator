@@ -23,13 +23,14 @@ export type JobErrorCategory =
   | "compliance"
   | "quality";
 
-/** SSE で配信される 1 イベント(contract JobEvent + 実装拡張 genre)。 */
+/** SSE で配信される 1 イベント(contract JobEvent)。 */
 export interface JobEvent {
   readonly timestamp: string; // ISO8601(JST, +09:00)
-  readonly job_name: string; // "daily_cycle" 等
+  readonly run_id?: string; // uuid = job_history.id
+  readonly job_name: string; // "music_generation" 等
   readonly step: string; // 進捗軸(cycle/post/music/...)
   readonly status: JobStatus;
-  readonly genre?: string | null; // grid の列キー(post 単位 step のみ非 null)
+  readonly genre?: string | null; // タイムライン表示用(post 単位 step のみ非 null)
   readonly context_type?: string | null; // "plan" / "post"
   readonly context_id?: string | null; // uuid 文字列
   readonly error_category?: JobErrorCategory | null;
@@ -41,6 +42,8 @@ export type JobStreamStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 /** subscribeJobs のオプション。 */
 export interface SubscribeJobsOptions {
+  /** 購読対象の実行 ID(job_history.id)。 必須(contract: run_id query)。 */
+  readonly runId: string;
   /** 外部からの停止用シグナル(指定時は内部 AbortController とは別系統で停止できる)。 */
   readonly signal?: AbortSignal;
   /** 接続状態の変化を受け取る(EventSource 風の onopen/onerror 相当)。 */
@@ -149,21 +152,23 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * backend `/jobs/stream`(SSE)を購読する EventSource 風ラッパ。
+ * backend `/jobs/stream?run_id=...`(SSE)を購読する EventSource 風ラッパ。
  *
  * authFetch 経由(Authorization 付与)で fetch し、 text/event-stream を手パースして
  * onEvent へ JobEvent を渡す。 切断/エラー時は指数バックオフ(1s→上限 30s)で再接続する。
+ * 初期表示は DB snapshot(`listJobRunEvents`)、 本関数は以後のライブ差分用。
  *
  * @param onEvent  受信した JobEvent ごとに呼ばれる。
- * @param opts     signal(外部停止) / onStatus(接続状態通知)。
+ * @param opts     runId(必須) / signal(外部停止) / onStatus(接続状態通知)。
  * @returns        購読を停止する unsubscribe(AbortController.abort 相当)。
  */
 export function subscribeJobs(
   onEvent: (event: JobEvent) => void,
-  opts: SubscribeJobsOptions = {},
+  opts: SubscribeJobsOptions,
 ): () => void {
   const controller = new AbortController();
-  const { signal: externalSignal, onStatus } = opts;
+  const { runId, signal: externalSignal, onStatus } = opts;
+  const streamPath = `${STREAM_PATH}?run_id=${encodeURIComponent(runId)}`;
 
   const stop = () => controller.abort();
   // 外部 signal が abort されたら内部も停止する。
@@ -186,7 +191,7 @@ export function subscribeJobs(
       notify(attempted ? "reconnecting" : "connecting");
       attempted = true;
       try {
-        const response = await authFetch(STREAM_PATH, {
+        const response = await authFetch(streamPath, {
           method: "GET",
           headers: { Accept: "text/event-stream" },
           cache: "no-store",
