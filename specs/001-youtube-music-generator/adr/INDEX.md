@@ -1,6 +1,6 @@
 # ADR インデックス
 
-YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (ADR-0001〜0038)。
+YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (ADR-0001〜0040)。
 新規 ADR を追加したら本インデックスにも 1 行追記する。テンプレートは
 [0000-template.md](0000-template.md)。
 
@@ -23,10 +23,12 @@ YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (A
 - [ADR-0032](0032-improvement-plan-llm-schema.md) — 改善計画 LLM の出力スキーマ
 - [ADR-0033](0033-initial-genres-and-planner-prompt.md) — 初期ジャンル候補と改善計画 LLM のプロンプト構造
 - [ADR-0037](0037-llm-mismatch-repair.md) — LLM provider/model 不整合の GET 公開と PUT 修復
+- [ADR-0040](0040-runtime-caption-includes-llm-proposal-fields.md) — 実行時プロンプトへ LLM提案フィールドを決定論連結
 
 ## コンテンツ生成・動画
 
-- [ADR-0003](0003-video-format-30min-via-six-track-stitching.md) — 動画フォーマット = 30分(5分 × 6本連結)
+- [ADR-0003](0003-video-format-30min-via-six-track-stitching.md) — 動画フォーマット = 30分(300秒 × 6本連結)
+
 - [ADR-0015](0015-video-visualizer-showwaves-overlay.md) — 動画ビジュアライザ = SDXL 生成サムネ + ffmpeg `showwaves` overlay
 - [ADR-0016](0016-thumbnail-sdxl-model-strategy.md) — サムネ生成 = Juggernaut XL v10 デフォルト + ジャンル別モデル切替
 - [ADR-0017](0017-directive-parser-auto-detect.md) — ディレクティブパーサ = 独自実装(自動判別方式)
@@ -41,6 +43,7 @@ YouTube 音楽投稿自動化システムのアーキテクチャ決定記録 (A
 - [ADR-0035](0035-staged-rollout-dryrun-default.md) — MVP は全機能実装 + dryrun=ON 既定で段階移行する
 - [ADR-0036](0036-job-history-trigger-text-check.md) — job_history.trigger は TEXT+CHECK (NULL 可)、ENUM は作らない
 - [ADR-0011](0011-scheduler-apscheduler-in-backend-process.md) — スケジューラ = APScheduler(承認 Plan・single-flight)
+- [ADR-0039](0039-evidence-backed-plan-approval-and-audio-qa.md) — 根拠付き Daily Plan 承認ゲート・仕様 hash・Audio QA
 
 ## コンプライアンス・セキュリティ
 

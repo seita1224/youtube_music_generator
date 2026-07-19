@@ -81,6 +81,29 @@ class MusicGenerateRequest(BaseModel):
     seed: int | None = None
 
 
+def music_request_from_execution_spec(
+    *,
+    prompt: str,
+    duration_sec: int,
+    bpm: int,
+    music_key: str,
+    seed: int,
+    output_uri: str,
+) -> MusicGenerateRequest:
+    """実行用音楽生成仕様 + ``output_uri`` から GPU リクエストを構築する。
+
+    実行時に変えてよいのは ``output_uri`` のみ。それ以外は仕様の最終値をそのまま使う。
+    """
+    return MusicGenerateRequest(
+        prompt=prompt,
+        duration_sec=duration_sec,
+        output_uri=output_uri,
+        bpm=bpm,
+        music_key=music_key,
+        seed=seed,
+    )
+
+
 class ImageGenerateRequest(BaseModel):
     """``POST /generate/image`` のリクエスト (ImageGenerateRequest)。"""
 
