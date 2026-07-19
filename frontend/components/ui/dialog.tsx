@@ -1,13 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
 // shadcn/ui 風 Dialog(radix 非依存の自前モーダル)。
 // 制御コンポーネント: open / onOpenChange を呼び出し側が保持する。
 // Escape / オーバーレイクリックで閉じ、 表示中は body スクロールをロックする。
-// dryrun 却下理由入力の確認ダイアログに使用。
+// 必ず document.body へ portal する。Card の backdrop-blur 等が作る
+// containing block / stacking context に fixed オーバーレイが閉じ込められないようにする。
 
 interface DialogProps {
   readonly open: boolean;
@@ -16,6 +18,15 @@ interface DialogProps {
 }
 
 function Dialog({ open, onOpenChange, children }: DialogProps): React.JSX.Element | null {
+  // SSR / 初回 hydration では document が無いので、client mount 後にだけ portal する。
+  const [portalTarget, setPortalTarget] = React.useState<HTMLElement | null>(
+    null,
+  );
+
+  React.useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
   React.useEffect(() => {
     if (!open) {
       return;
@@ -34,14 +45,17 @@ function Dialog({ open, onOpenChange, children }: DialogProps): React.JSX.Elemen
     };
   }, [open, onOpenChange]);
 
-  if (!open) {
+  if (!open || portalTarget == null) {
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div
+      data-testid="dialog-overlay"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+    >
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/80"
         aria-hidden="true"
         onClick={() => onOpenChange(false)}
       />
@@ -52,7 +66,8 @@ function Dialog({ open, onOpenChange, children }: DialogProps): React.JSX.Elemen
       >
         {children}
       </div>
-    </div>
+    </div>,
+    portalTarget,
   );
 }
 
