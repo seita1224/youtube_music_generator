@@ -1,0 +1,31 @@
+# Ruff: lint + format (ADR-0014)
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "ASYNC", # flake8-async
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # line length は formatter に委譲
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["B011"]
+"alembic/**" = ["F401", "E402"]
+
+[lint.isort]
+known-first-party = ["ymg_backend"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

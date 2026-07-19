@@ -1,0 +1,68 @@
+# backend / frontend / postgres(pgvector) を定義 (ADR-0029, ADR-0031)。
+# GPU worker は host 直 + systemd のため compose には含めない (ADR-0031 ハイブリッド)。
+# backend からは GPU_WORKER_BASE_URL (既定 http://127.0.0.1:8001) で到達する。
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ymg}
+      POSTGRES_USER: ${POSTGRES_USER:-ymg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      # ホスト公開ポートは POSTGRES_HOST_PORT で変更可(他プロジェクトの 5432 と衝突する環境向け)
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ymg} -d ${POSTGRES_DB:-ymg}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+    extra_hosts:
+      # backend(コンテナ)から host の GPU worker(127.0.0.1:8001)へ到達するため
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${DATA_ROOT:-./data}:/srv/ymg
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # BFF のビルド時フォールバック。 実接続先は runtime env を優先。
+        BACKEND_BASE_URL: http://backend:8000
+    restart: unless-stopped
+    # `.env` を wholesale で渡さない(FERNET_KEY / DB / LLM / YouTube 等を frontend に入れない)。
+    # 明示 allowlist のみ。
+    environment:
+      # frontend → backend は内部ネットワーク経由(BFF がサーバ側で Basic 注入)
+      BACKEND_BASE_URL: http://backend:8000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?set AUTH_SESSION_SECRET in .env}
+      # LAN HTTP 前提。 HTTPS 終端時は true に変更。
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      NODE_ENV: production
+    depends_on:
+      - backend
+    ports:
+      # ホスト公開ポートは FRONTEND_HOST_PORT で変更可(ポート占有/転送 stuck 回避用)
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3000}:3000"
+
+volumes:
+  pgdata:

@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-[#131313] text-[#e5e2e1] font-sans antialiased;
+}
+
+@layer components {
+  /*
+   * Native select popup は Chromium/Linux で select の半透明背景を引き継がず、
+   * option だけ淡色文字を継承することがある。color-scheme と不透明色を両方
+   * 指定し、closed control / opened popup を同じ dark palette に固定する。
+   */
+  .native-dark-select {
+    color-scheme: dark;
+    color: #f1f5f9;
+    background-color: #0f172a;
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .native-dark-select > option,
+  .native-dark-select-option {
+    color: #f1f5f9;
+    background-color: #0f172a;
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .native-dark-select > option[data-current="true"],
+  .native-dark-select-option[data-current="true"] {
+    font-weight: 600;
+  }
+
+  .native-dark-select > option:disabled,
+  .native-dark-select > option[data-muted="true"],
+  .native-dark-select-option:disabled,
+  .native-dark-select-option[data-muted="true"] {
+    color: #94a3b8;
+    background-color: #1e293b;
+    -webkit-text-fill-color: currentColor;
+    opacity: 1;
+  }
+}

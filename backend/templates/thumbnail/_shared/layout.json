@@ -1,0 +1,56 @@
+{
+  "$comment": "ADR-0034 (3): genre-common thumbnail layout for the Pillow overlay onto the SDXL background. Coordinates are absolute pixels on a 1280x720 (16:9) canvas. Origin is top-left. Genre YAML files override font_primary/colors only; geometry here is shared across all 6 genres.",
+  "canvas": {
+    "width": 1280,
+    "height": 720,
+    "format": "JPEG",
+    "quality": 90
+  },
+  "safe_area": {
+    "$comment": "Inset kept clear of YouTube UI overlays (duration pill, progress bar).",
+    "margin": 48
+  },
+  "elements": {
+    "headline": {
+      "$comment": "Center-bottom large heading = the Japanese subtitle reused from the title (no separate LLM call). Uses font_secondary (Noto Sans JP) for Japanese glyph coverage.",
+      "text_source": "japanese_subtitle",
+      "font_role": "secondary",
+      "font_size": 96,
+      "max_width": 1120,
+      "max_lines": 2,
+      "line_spacing": 8,
+      "anchor": "ms",
+      "position": { "x": 640, "y": 560 },
+      "align": "center"
+    },
+    "subtext": {
+      "$comment": "Sub line under the headline: '{Genre EN} · 30 MIN'. Uses font_primary (genre display font).",
+      "text_format": "{genre_display} · {duration} MIN",
+      "font_role": "primary",
+      "font_size": 56,
+      "anchor": "ms",
+      "position": { "x": 640, "y": 648 },
+      "align": "center"
+    },
+    "duration": {
+      "$comment": "Bottom-right standalone duration marker.",
+      "text_format": "{duration} MIN",
+      "font_role": "primary",
+      "font_size": 48,
+      "anchor": "rs",
+      "position": { "x": 1232, "y": 696 },
+      "align": "right"
+    }
+  },
+  "text_positions": {
+    "$comment": "Named presets that genre YAML 'text_position' selects. Each remaps the headline/subtext anchor and y. x stays centered (640).",
+    "center-bottom": {
+      "headline": { "x": 640, "y": 560, "anchor": "ms" },
+      "subtext": { "x": 640, "y": 648, "anchor": "ms" }
+    },
+    "center": {
+      "headline": { "x": 640, "y": 348, "anchor": "mm" },
+      "subtext": { "x": 640, "y": 436, "anchor": "mm" }
+    }
+  }
+}

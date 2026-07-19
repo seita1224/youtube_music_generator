@@ -1,0 +1,12 @@
+# Title template for the "future garage" genre (ADR-0034).
+#
+# Directive syntax (ADR-0017):
+#   - {{<ascii identifier>}} -> system variable substitution (e.g. {{duration}}, {{genre}})
+#   - {{<free-form Japanese instruction>}} -> LLM-generated text
+#
+# Title policy (ADR-0034 section 1):
+#   "{English genre name} {duration}min | {<=12-char Japanese subtitle}"
+genre: "future garage"
+display_name: "Future Garage"
+template: "Future Garage {{duration}}min | {{12字以内の日本語サブタイトル}}"
+example: "Future Garage 30min | 水中の東京"

@@ -1,0 +1,1803 @@
+openapi: 3.1.0
+info:
+  title: YMG Backend API
+  version: 1.0.0
+  description: |
+    FastAPI backend for YouTube music auto-posting system.
+    Provides admin UI endpoints (Next.js frontend) and orchestrates GPU worker / LLM / YouTube.
+    All endpoints require Basic Auth (ADR-0013, LAN-internal).
+
+servers:
+  - url: http://127.0.0.1:8000
+
+security:
+  - basicAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Backend liveness + dependency status
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /plans:
+    get:
+      summary: List plans (filter by cycle / status)
+      operationId: listPlans
+      parameters:
+        - in: query
+          name: cycle
+          schema:
+            type: string
+            enum: [daily, weekly]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [generated, approved, executing, music_generated, completed, failed]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Plan"
+                  total:
+                    type: integer
+
+    post:
+      summary: Generate a new plan via improvement-plan LLM
+      operationId: generatePlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cycle, target_date]
+              properties:
+                cycle:
+                  type: string
+                  enum: [daily, weekly]
+                target_date:
+                  type: string
+                  format: date
+                force_regenerate:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Plan generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "409":
+          description: Already exists (use force_regenerate=true)
+        "422":
+          description: LLM validation failed after retries
+
+  /plans/{plan_id}:
+    get:
+      operationId: getPlan
+      parameters:
+        - $ref: "#/components/parameters/PlanIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+
+  /plans/{plan_id}/approve:
+    post:
+      summary: Approve a plan → unlocks daily cycle execution
+      operationId: approvePlan
+      parameters:
+        - $ref: "#/components/parameters/PlanIdPath"
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+
+  /posts:
+    get:
+      operationId: listPosts
+      parameters:
+        - in: query
+          name: plan_id
+          description: 指定 Plan に属する Post のみ返す (Plan 詳細の音声一覧用)
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, generating, music_generated, generated, posting, posted, failed]
+        - in: query
+          name: genre
+          schema:
+            type: string
+        - in: query
+          name: from_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to_date
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Post"
+
+  /posts/{post_id}:
+    get:
+      operationId: getPost
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /posts/{post_id}/retry:
+    post:
+      summary: Retry a failed post pipeline
+      operationId: retryPost
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "202":
+          description: Retry queued
+
+  /posts/{post_id}/tracks:
+    get:
+      summary: List audio tracks for a post (6 tracks when music_generated)
+      operationId: listPostTracks
+      description: |
+        AudioTrack メタを返す。 `audio_uri` は露出せず、再生/DL は別エンドポイントを使う。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                additionalProperties: false
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AudioTrack"
+        "404":
+          description: Post が存在しない
+
+  /posts/{post_id}/tracks/{position}/audio:
+    get:
+      summary: Stream track WAV for in-browser playback
+      operationId: streamPostTrackAudio
+      description: >-
+        StorageAdapter 経由で WAV を StreamingResponse で返す。
+        `audio_uri` はレスポンスに含めない。 Basic 認証必須(dryrun 動画配信と同方式)。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+        - $ref: "#/components/parameters/TrackPositionPath"
+      responses:
+        "200":
+          description: WAV バイトストリーム
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Post / track / オブジェクトが存在しない
+
+  /posts/{post_id}/tracks/{position}/download:
+    get:
+      summary: Download track WAV (Content-Disposition attachment)
+      operationId: downloadPostTrackAudio
+      description: >-
+        再生用と同じバイト源を attachment で返す。 Basic 認証必須。
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+        - $ref: "#/components/parameters/TrackPositionPath"
+      responses:
+        "200":
+          description: WAV ダウンロード
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="track-0.wav"'
+        "404":
+          description: Post / track / オブジェクトが存在しない
+
+  /dryrun/outputs:
+    get:
+      summary: List dryrun outputs (review queue)
+      operationId: listDryrunOutputs
+      parameters:
+        - in: query
+          name: state
+          schema:
+            type: string
+            enum: [pending, approved, rejected, auto_expired, posted]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DryrunOutput"
+
+  /dryrun/outputs/{id}/approve:
+    post:
+      summary: Approve dryrun → schedule YouTube post
+      operationId: approveDryrun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryrunOutput"
+
+  /dryrun/outputs/{id}/reject:
+    post:
+      summary: Reject dryrun → delete + feed reason to next planner LLM
+      operationId: rejectDryrun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 4
+      responses:
+        "200":
+          description: Rejected
+
+  /dryrun/outputs/{id}/video:
+    get:
+      summary: Stream dryrun preview video (chunked, for <video> review playback)
+      description: >-
+        StorageAdapter.open でチャンク読みした動画を StreamingResponse で返す。
+        ブラウザの <video> から同一オリジン proxied パス
+        (/api/backend/dryrun/outputs/{id}/video) で参照され、 Basic 認証は
+        ブラウザの認証セッションに従う (authFetch は経由しない)。
+      operationId: getDryrunVideo
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 動画バイトストリーム (chunked)。
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: dryrun output が存在しない、 または動画 URI のオブジェクトが無い。
+        "409":
+          description: >-
+            動画がもう存在しない state (rejected / auto_expired) で配信不可。
+
+  /dryrun/outputs/{id}/thumbnail:
+    get:
+      summary: Stream dryrun thumbnail image (for list/detail preview)
+      description: >-
+        対応 Post の thumbnail_uri を StorageAdapter.open でチャンク読みし
+        StreamingResponse (image/jpeg) で返す。 一覧/詳細の <img> から同一オリジン
+        proxied パスで参照される (Basic 認証はブラウザセッションに従う)。
+      operationId: getDryrunThumbnail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: サムネイル画像バイトストリーム。
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: dryrun output / Post / thumbnail_uri が存在しない、 またはオブジェクトが無い。
+
+  /scheduler:
+    get:
+      summary: Get scheduler enabled state
+      operationId: getSchedulerState
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerState"
+
+    put:
+      summary: Enable / disable scheduler (ADR-0031)
+      operationId: setSchedulerState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerState"
+
+  /scheduler/run-now:
+    post:
+      summary: Start music generation for an approved Daily Plan (ADR-0006, ADR-0011)
+      operationId: runSchedulerNow
+      description: |
+        承認済み Daily Plan の音楽専用実行を即時 1 回起動する。
+        実行予約時に `job_history(status=running)` を commit し、その id を `run_id` として返す。
+        長時間処理のためバックグラウンド実行し 202 を返す。
+        定時(cron)と同一の single-flight 制約を共有する。
+        `target_date` だけで新規 Plan を自動生成する挙動は廃止。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              additionalProperties: false
+              properties:
+                plan_id:
+                  type: string
+                  format: uuid
+                  description: status=approved の Daily Plan id
+      responses:
+        "202":
+          description: Accepted; music generation runs in background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunNowResponse"
+        "404":
+          description: plan_id が存在しない
+        "409":
+          description: |
+            Plan が approved 以外、または別の music_generation が running
+            (single-flight)。メッセージ例: 「別の音楽生成が実行中」
+        "503":
+          description: music runner / composition root 未配線
+
+  /scheduler/panic-stop:
+    post:
+      summary: Emergency stop (ADR-0031). Disables scheduler + lists recent posts for private-flip.
+      operationId: panicStop
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                window_hours:
+                  type: integer
+                  default: 24
+                set_private:
+                  type: array
+                  description: youtube_video_id 配列、 渡されたものを private に変更
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Action result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scheduler_enabled:
+                    type: boolean
+                  recent_videos:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Video"
+                  updated_count:
+                    type: integer
+
+  /analytics/summary:
+    get:
+      summary: 集計サマリ(改善計画 LLM 入力用と同じビュー)
+      operationId: getAnalyticsSummary
+      parameters:
+        - in: query
+          name: window_days
+          schema:
+            type: integer
+            default: 14
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+
+  /analytics/videos:
+    get:
+      operationId: listAnalyticsVideos
+      parameters:
+        - in: query
+          name: from_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: genre
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VideoAnalytics"
+
+  /llm/usage:
+    get:
+      summary: 月次 LLM 使用量 + コスト(ADR-0024)
+      operationId: getLlmUsage
+      parameters:
+        - in: query
+          name: month
+          schema:
+            type: string
+            pattern: "^[0-9]{4}-[0-9]{2}$"
+            example: "2026-05"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmUsage"
+
+  /llm/providers:
+    get:
+      summary: LLM settings (active provider + credential metadata)
+      operationId: listLlmProviders
+      description: >-
+        active provider/auth_mode/model と、各 provider の選択肢および credential
+        メタデータ (source/configured) を返す。 API key 平文・マスク・末尾は含めない。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmSettingsResponse"
+
+    put:
+      summary: Change active LLM provider/model (ADR-0019)
+      operationId: setActiveLlmProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, auth_mode, model]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic, ollama]
+                auth_mode:
+                  type: string
+                  enum: [api_key, codex_oauth]
+                model:
+                  type: string
+                  description: provider の supported_models に含まれるモデル ID
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmProviderState"
+        "400":
+          description: Invalid combination (Anthropic + non-api_key)
+        "422":
+          description: Unsupported auth_mode (codex_oauth) or invalid model
+
+  /llm/credentials:
+    put:
+      summary: Set/replace encrypted LLM API key (write-only)
+      operationId: putLlmCredential
+      description: >-
+        OpenAI/Anthropic の API key を Fernet 暗号化して llm_provider_secrets に保存する。
+        応答に平文・マスクは含めない。 環境変数が非空のときは 409 (env が SoT)。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, api_key]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic]
+                api_key:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: >-
+                    Provider API key (write-only). Leading/trailing whitespace is
+                    stripped server-side before encryption. Whitespace-only is
+                    rejected. Max 2048 characters (input DoS bound).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmCredentialState"
+        "409":
+          description: Environment variable is source of truth
+        "422":
+          description: Empty, whitespace-only, or too-long api_key
+
+  /llm/credentials/{provider}:
+    delete:
+      summary: Delete DB-stored LLM API key
+      operationId: deleteLlmCredential
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [openai, anthropic]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmCredentialState"
+        "409":
+          description: Environment variable is source of truth
+        "404":
+          description: No DB-stored credential for this provider
+
+  /prompts:
+    get:
+      summary: List prompts and available versions (T135, FR-036)
+      operationId: listPrompts
+      description: >-
+        backend/prompts/<area>/<name>_v<N>.md を走査し、 area/name ごとに利用可能な
+        version 一覧を返す (PromptLoader.available_versions)。 read-only。 編集 (書込) は
+        MVP 範囲外。
+      parameters:
+        - in: query
+          name: area
+          description: area で絞り込む (未指定は全 area)。
+          schema:
+            type: string
+            example: "planner"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PromptSummary"
+
+  /prompts/{prompt_name}:
+    get:
+      summary: Preview a prompt body at a version (T135, FR-036)
+      operationId: getPromptVersion
+      description: >-
+        指定 prompt の本文をプレビューする (PromptLoader.load)。 version 省略時は最新版
+        (N 最大) を解決する。 read-only。
+      parameters:
+        - in: path
+          name: prompt_name
+          required: true
+          description: "<area>/<name> 形式 (バージョン接尾辞は付けない)。"
+          schema:
+            type: string
+            example: "planner/system"
+        - in: query
+          name: version
+          required: false
+          description: 明示バージョン (1 以上)。 未指定は最新版。
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptVersion"
+        "404":
+          description: prompt / version not found (PromptNotFoundError)
+
+  /mvp-check:
+    get:
+      summary: MVP release readiness checklist (T128, ADR-0035 §6)
+      operationId: getMvpCheck
+      description: >-
+        ADR-0035 の MVP 判定 6 項目を DB から判定し、 各項目を green / red で返す。
+        ダッシュボードの x/6 小インジケータ (T129) が参照する。 副作用なし (read-only)。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MvpCheck"
+
+  /jobs/runs:
+    get:
+      summary: List recent job runs (job_history snapshot, ADR-0023)
+      operationId: listJobRuns
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: job_name
+          schema:
+            type: string
+            example: music_generation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                additionalProperties: false
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JobRun"
+
+  /jobs/runs/{run_id}/events:
+    get:
+      summary: Persisted step events for a run (job_step_events, ADR-0023)
+      operationId: listJobRunEvents
+      parameters:
+        - $ref: "#/components/parameters/RunIdPath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id, items]
+                additionalProperties: false
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JobStepEvent"
+        "404":
+          description: run_id が存在しない
+
+  /jobs/stream:
+    get:
+      summary: SSE for live job progress of a selected run (ADR-0023)
+      operationId: streamJobs
+      description: |
+        選択した `run_id` のライブ差分を text/event-stream で配信する。
+        初期表示は `GET /jobs/runs/{run_id}/events` の DB snapshot、以後本 SSE。
+        イベント本体は JobEvent(JSON)。正本は job_step_events。
+      parameters:
+        - in: query
+          name: run_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: job_history.id
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: JSON-Lines events of JobEvent
+        "404":
+          description: run_id が存在しない
+
+  /youtube/videos/{video_id}/privacy:
+    put:
+      summary: Direct privacy update (used by panic-stop or manual)
+      operationId: setVideoPrivacy
+      parameters:
+        - in: path
+          name: video_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [privacy_status]
+              properties:
+                privacy_status:
+                  type: string
+                  enum: [public, unlisted, private]
+      responses:
+        "200":
+          description: OK
+
+  /genres:
+    get:
+      summary: List genres (rotation 状態の確認用; US3 T107)
+      operationId: listGenres
+      parameters:
+        - in: query
+          name: enabled
+          description: enabled=true/false で有効/無効のみに絞る (未指定は全件)
+          schema:
+            type: boolean
+        - in: query
+          name: role
+          description: role 文字列でフィルタ (experiment / extension / main)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Genre"
+                  total:
+                    type: integer
+    post:
+      summary: ジャンルを手動で新規作成する (US3, FR-038)
+      description: >-
+        ジャンル辞書に新規ジャンルを追加する。 既定 role は experiment
+        (experiment_slot 同様、 新ジャンルは実験から始める)。 name 重複は 409。
+        audit_log に action="genre_created" を残す。
+      operationId: createGenre
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, display_name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                display_name:
+                  type: string
+                  minLength: 1
+                role:
+                  type: string
+                  enum: [experiment, extension, main]
+                  default: experiment
+                bpm_min:
+                  type: integer
+                  nullable: true
+                bpm_max:
+                  type: integer
+                  nullable: true
+                description:
+                  type: string
+                enabled:
+                  type: boolean
+                  default: true
+      responses:
+        "201":
+          description: Created (新規 Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "409":
+          description: "name 重複 (既に存在するジャンル)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /genres/{name}/promote:
+    post:
+      summary: ジャンルを採用方向へ昇格する (enabled=true + role 遷移; US3 T107)
+      description: >-
+        実験/無効ジャンルを主力寄りへ昇格する role 遷移。 enabled=true にし、
+        role を experiment→extension→main の方向へ進める (target_role 明示も可)。
+        audit_log に action="genre_promoted" を残す。
+      operationId: promoteGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_role:
+                  description: 明示する遷移先 role (省略時は 1 段昇格)
+                  type: string
+                  enum: [extension, main]
+                reason:
+                  description: 昇格理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "不正な role 遷移 (例: main をさらに promote)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /genres/{name}/demote:
+    post:
+      summary: ジャンルを 1 段降格する (role step down; US3, FR-038)
+      description: >-
+        role を main→extension→experiment の方向へ 1 段下げる (target_role 明示も可)。
+        enabled は変更しない (停止は disable)。 experiment をさらに降格は 409。
+        audit_log に action="genre_demoted" を残す。
+      operationId: demoteGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_role:
+                  description: 明示する遷移先 role (省略時は 1 段降格)
+                  type: string
+                  enum: [extension, experiment]
+                reason:
+                  description: 降格理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "不正な role 遷移 (例: experiment をさらに demote)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /genres/{name}/disable:
+    post:
+      summary: ジャンルを無効化する (enabled=false; US3 T107)
+      description: >-
+        avoid / 削除推奨ジャンルを無効化する。 enabled=false にする (role は保持)。
+        daily_cycle._load_enabled_genres が次回以降このジャンルを拾わなくなる。
+        audit_log に action="genre_disabled" を残す。
+      operationId: disableGenre
+      parameters:
+        - $ref: "#/components/parameters/GenreNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  description: 無効化理由 (audit payload へ記録)
+                  type: string
+      responses:
+        "200":
+          description: OK (遷移後の Genre)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Genre"
+        "404":
+          description: genre not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics:
+    get:
+      summary: ジャンル別 retention/views 集計 + 採用/削除推奨 (frontend /analytics 用; US3 T110)
+      description: >-
+        /analytics/summary がジャンル別の生集計を返すのに対し、 本 endpoint は
+        frontend のチャート + 推奨テーブルが直接消費できる形 (by_genre 配列 +
+        recommendations 配列) を返す。 recommendations は genre recommend (T106) の
+        判定結果 (experiment_slot>=4本かつ経過>=14日で 主力平均 retention 比>=80%→adopt /
+        <60%→drop)。
+      operationId: getAnalytics
+      parameters:
+        - in: query
+          name: window_days
+          description: 集計ウィンドウ日数 (既定 14)
+          schema:
+            type: integer
+            default: 14
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOverview"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  parameters:
+    PlanIdPath:
+      in: path
+      name: plan_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PostIdPath:
+      in: path
+      name: post_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TrackPositionPath:
+      in: path
+      name: position
+      required: true
+      description: AudioTrack.position (0..5)
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 5
+    RunIdPath:
+      in: path
+      name: run_id
+      required: true
+      description: job_history.id (API run_id)
+      schema:
+        type: string
+        format: uuid
+    GenreNamePath:
+      in: path
+      name: name
+      required: true
+      description: Genre.name (主キー。 例 "lo-fi hip-hop")
+      schema:
+        type: string
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        db:
+          type: string
+          enum: [ok, degraded]
+        gpu_worker:
+          type: string
+          enum: [ok, unreachable]
+        scheduler_enabled:
+          type: boolean
+        dryrun_enabled:
+          type: boolean
+        llm_provider:
+          type: string
+
+    Plan:
+      type: object
+      required: [id, cycle, status, payload, rationale, llm_provider, llm_model, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cycle:
+          type: string
+          enum: [daily, weekly]
+        target_date:
+          type: string
+          format: date
+        target_week_start:
+          type: string
+          format: date
+        payload:
+          description: DailyPlan / WeeklyPlan の Pydantic dump(ADR-0032)
+          type: object
+        rationale:
+          type: string
+        status:
+          type: string
+          enum: [generated, approved, executing, music_generated, completed, failed]
+        llm_provider:
+          type: string
+        llm_model:
+          type: string
+        llm_prompt_version:
+          type: string
+        llm_cost_usd:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
+
+    Post:
+      type: object
+      required: [id, plan_id, position, genre, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        genre:
+          type: string
+        payload:
+          type: object
+        status:
+          type: string
+          enum: [pending, generating, music_generated, generated, posting, posted, failed]
+        final_title:
+          type: string
+        final_description:
+          type: string
+        thumbnail_uri:
+          type: string
+        video_uri:
+          type: string
+        youtube_video_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        posted_at:
+          type: string
+          format: date-time
+        retention_24h:
+          type: number
+        views_24h:
+          type: integer
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    DryrunOutput:
+      type: object
+      required: [id, post_id, state, video_uri, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [pending, approved, rejected, auto_expired, posted]
+        video_uri:
+          type: string
+        reject_reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        reviewed_at:
+          type: string
+          format: date-time
+        title:
+          type: string
+          nullable: true
+          description: 対応 Post の final_title (一覧の可読性向上のため join)。 未生成は null。
+        has_thumbnail:
+          type: boolean
+          description: 対応 Post に thumbnail_uri がある場合 true (一覧/詳細でサムネ表示可)。
+
+    SchedulerState:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+
+    RunNowResponse:
+      type: object
+      required: [accepted, run_id, plan_id, target_date]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
+        run_id:
+          type: string
+          format: uuid
+          description: job_history.id
+        plan_id:
+          type: string
+          format: uuid
+        target_date:
+          type: string
+          format: date
+
+    JobRun:
+      type: object
+      required: [run_id, job_name, status, started_at]
+      additionalProperties: false
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        job_name:
+          type: string
+          example: music_generation
+        status:
+          type: string
+          enum: [running, succeeded, failed, skipped]
+        trigger:
+          type: string
+          enum: [cron, run_now]
+          nullable: true
+        target_date:
+          type: string
+          format: date
+          nullable: true
+        plan_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: context_type=plan のときの context_id
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+
+    JobStepEvent:
+      type: object
+      required: [id, run_id, step, status, created_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        step:
+          type: string
+          description: cycle / post / music 等
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        genre:
+          type: string
+          nullable: true
+        context_type:
+          type: string
+          nullable: true
+        context_id:
+          type: string
+          format: uuid
+          nullable: true
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AudioTrack:
+      type: object
+      required: [id, post_id, position, duration_sec, acoustid_status, generated_at]
+      additionalProperties: false
+      description: |
+        メタのみ。 audio_uri は露出せず、再生は /audio・DL は /download。
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          minimum: 0
+          maximum: 5
+        duration_sec:
+          type: integer
+        bpm:
+          type: integer
+          nullable: true
+        music_key:
+          type: string
+          nullable: true
+        subtheme:
+          type: string
+          nullable: true
+        acoustid_status:
+          type: string
+          enum: [not_checked, clear, hit, api_error]
+        regenerated_count:
+          type: integer
+        generated_at:
+          type: string
+          format: date-time
+
+    Video:
+      type: object
+      required: [youtube_video_id, title, posted_at, privacy_status, contains_synthetic_media]
+      properties:
+        youtube_video_id:
+          type: string
+        title:
+          type: string
+        genre:
+          type: string
+        duration_sec:
+          type: integer
+        posted_at:
+          type: string
+          format: date-time
+        privacy_status:
+          type: string
+          enum: [public, unlisted, private, deleted]
+        contains_synthetic_media:
+          type: boolean
+        thumbnail_uri:
+          type: string
+
+    VideoAnalytics:
+      allOf:
+        - $ref: "#/components/schemas/Video"
+        - type: object
+          properties:
+            metrics:
+              type: object
+              properties:
+                views:
+                  type: integer
+                estimated_minutes_watched:
+                  type: number
+                average_view_duration_sec:
+                  type: integer
+                retention_pct:
+                  type: number
+                impressions:
+                  type: integer
+                ctr_pct:
+                  type: number
+                traffic_sources:
+                  type: object
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        window_days:
+          type: integer
+        sample_size:
+          type: integer
+        by_genre:
+          type: array
+          items:
+            type: object
+            properties:
+              genre:
+                type: string
+              video_count:
+                type: integer
+              avg_retention_pct:
+                type: number
+              total_views:
+                type: integer
+        top_videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoAnalytics"
+
+    Genre:
+      type: object
+      required: [name, display_name, role, enabled]
+      properties:
+        name:
+          type: string
+          description: 主キー (例 "lo-fi hip-hop")
+        display_name:
+          type: string
+        bpm_min:
+          type: integer
+          nullable: true
+        bpm_max:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        role:
+          description: enum ではなく文字列運用 (primary / extended / experimental)
+          type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GenreAnalytics:
+      type: object
+      required: [genre, role, video_count, avg_retention_pct, total_views]
+      properties:
+        genre:
+          type: string
+        role:
+          type: string
+        video_count:
+          type: integer
+        avg_retention_pct:
+          type: number
+          nullable: true
+        total_views:
+          type: integer
+
+    GenreRecommendation:
+      type: object
+      required: [genre, action, retention_ratio_to_primary, sample_size, days_elapsed, rationale]
+      properties:
+        genre:
+          type: string
+        action:
+          description: adopt=主力昇格推奨 / drop=削除推奨 / keep=継続観察
+          type: string
+          enum: [adopt, drop, keep]
+        retention_ratio_to_primary:
+          description: 主力ジャンル平均 retention に対する当該ジャンルの比 (>=0.8 で adopt / <0.6 で drop)
+          type: number
+          nullable: true
+        sample_size:
+          description: experiment_slot で投下した本数 (4 本以上が判定の前提)
+          type: integer
+        days_elapsed:
+          description: 実験開始からの経過日数 (14 日以上が判定の前提)
+          type: integer
+        rationale:
+          type: string
+
+    AnalyticsOverview:
+      type: object
+      required: [window_days, sample_size, by_genre, recommendations]
+      properties:
+        window_days:
+          type: integer
+        sample_size:
+          type: integer
+        by_genre:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenreAnalytics"
+        recommendations:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenreRecommendation"
+
+    LlmUsage:
+      type: object
+      properties:
+        month:
+          type: string
+        total_cost_usd:
+          type: number
+        budget_usd:
+          type: number
+        budget_pct:
+          type: number
+        by_provider:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              cost_usd:
+                type: number
+              prompt_tokens:
+                type: integer
+              cached_tokens:
+                type: integer
+              completion_tokens:
+                type: integer
+
+    LlmProviderConfig:
+      type: object
+      required:
+        [
+          provider,
+          available,
+          auth_modes,
+          models,
+          credential_source,
+          credential_configured,
+        ]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        available:
+          type: boolean
+          description: credential_configured と同義 (ollama は常に true)
+        auth_modes:
+          type: array
+          items:
+            type: string
+            enum: [api_key, codex_oauth]
+        models:
+          type: array
+          items:
+            type: string
+        credential_source:
+          type: string
+          enum: [env, db, none, n/a]
+          description: ollama は n/a。 cloud は env 非空 > db > none
+        credential_configured:
+          type: boolean
+        unsupported_auth_modes:
+          type: array
+          items:
+            type: string
+            enum: [api_key, codex_oauth]
+          description: UI で無効表示する認証方式 (Codex OAuth 等)
+
+    LlmActiveState:
+      type: object
+      required: [provider, auth_mode, model]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        auth_mode:
+          type: string
+          enum: [api_key, codex_oauth]
+        model:
+          type: string
+
+    LlmSettingsResponse:
+      type: object
+      required: [active, providers]
+      properties:
+        active:
+          $ref: "#/components/schemas/LlmActiveState"
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/LlmProviderConfig"
+
+    LlmProviderState:
+      type: object
+      required: [provider, auth_mode, model]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, ollama]
+        auth_mode:
+          type: string
+          enum: [api_key, codex_oauth]
+        model:
+          type: string
+
+    LlmCredentialState:
+      type: object
+      required: [provider, credential_source, credential_configured]
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic]
+        credential_source:
+          type: string
+          enum: [env, db, none, n/a]
+        credential_configured:
+          type: boolean
+
+    PromptVersion:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        content:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    PromptSummary:
+      type: object
+      description: GET /prompts の 1 要素 (area/name と利用可能な version 一覧)。
+      required: [area, name, versions]
+      properties:
+        area:
+          type: string
+          example: "planner"
+        name:
+          type: string
+          example: "system"
+        versions:
+          type: array
+          description: 利用可能な version (昇順)。
+          items:
+            type: integer
+          example: [1]
+        latest:
+          type: integer
+          description: 最新 version (versions の最大)。
+          example: 1
+
+    MvpCheckItem:
+      type: object
+      description: MVP 判定 6 項目の 1 つ (ADR-0035 §6)。
+      required: [id, label, status]
+      properties:
+        id:
+          type: string
+          enum:
+            - dryrun_success
+            - acoustid_clear
+            - unlisted_post
+            - panic_stop
+            - oauth_refresh
+            - slack_categories
+        label:
+          type: string
+          description: 人間可読な項目名。
+        status:
+          type: string
+          enum: [green, red]
+        detail:
+          type: string
+          description: 判定根拠 (件数等)。 任意。
+
+    MvpCheck:
+      type: object
+      description: GET /mvp-check のレスポンス (6 項目の判定結果と完了数)。
+      required: [items, completed, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MvpCheckItem"
+        completed:
+          type: integer
+          description: green の項目数 (0..6)。
+          example: 0
+        total:
+          type: integer
+          description: 判定項目総数 (常に 6)。
+          example: 6
+
+    JobEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+          description: job_history.id
+        job_name:
+          type: string
+        context_type:
+          type: string
+        context_id:
+          type: string
+          format: uuid
+        step:
+          type: string
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        genre:
+          type: string
+        error_category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [category, message]
+      properties:
+        category:
+          type: string
+          enum: [transient, recoverable, fatal, compliance, quality]
+        message:
+          type: string
+        detail:
+          type: object

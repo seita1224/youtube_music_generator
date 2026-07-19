@@ -1,0 +1,34 @@
+# gitleaks 設定 (T141)。 デフォルトルールを継承しつつ、 値抜きテンプレの誤検知を抑える。
+#
+# 方針:
+#   - 値入り `.env` は .gitignore 済 → そもそもコミットされない (検知対象外)
+#   - 値抜き `.env.example` は __set_strong_value__ / __sk-...__ 等のプレースホルダのみ →
+#     本物のシークレットではないので allowlist で通す
+#   - それでも本物の鍵が混入したら落とす (デフォルトルールが拾う)
+title = "YMG gitleaks config"
+
+# gitleaks 同梱のデフォルトルールを使う。
+[extend]
+useDefault = true
+
+[allowlist]
+description = "値抜きテンプレ・プレースホルダを誤検知しない"
+
+# .env.example はコミット前提のテンプレ。 値はプレースホルダのみ。
+paths = [
+  '''\.env\.example$''',
+  '''FERNET_KEY\.example$''',
+]
+
+# テンプレで使うプレースホルダ表現 (.env.example / quickstart.md / docs 内)。
+# 本物のシークレットには現れないため、 これらを含む行は無視する。
+regexes = [
+  '''__set_strong_value__''',
+  '''__base64_44_chars__''',
+  '''__sk-\.\.\.__''',
+  '''__sk-ant-\.\.\.__''',
+  '''__google_cloud_oauth_id__''',
+  '''__google_cloud_oauth_secret__''',
+  '''__from_acoustid_org__''',
+  '''hooks\.slack\.com/services/\.\.\.''',
+]

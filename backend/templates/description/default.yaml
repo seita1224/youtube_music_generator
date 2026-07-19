@@ -1,0 +1,61 @@
+# Description template (ADR-0034 §(2)) — genre-common base structure.
+#
+# Bilingual scene description + dynamic chapters + static bilingual AI
+# disclosure (FR-053, never LLM-generated) + 3 hashtags. Applies to all 6
+# genres; genre-specific values arrive via the LLM-generated fields below.
+#
+# Placeholders use the {{name}} convention (see templates/title/*.yaml).
+# Shared static blocks are loaded from the referenced _shared/*.txt files and
+# inserted verbatim where {{ai_disclosure}} / {{channel_promo}} appear.
+version: 1
+
+# Static blocks loaded verbatim (FR-053: AI disclosure is fixed text, the LLM
+# never rewrites it). Paths are relative to templates/description/.
+shared:
+  ai_disclosure: _shared/ai_disclosure.txt
+  channel_promo: _shared/channel_promo.txt
+
+# Chapter cadence: 30 min video = 6 tracks x 5 min (ADR-0003).
+chapters:
+  interval_seconds: 300
+  count: 6
+  # Each chapter line: "{{start}} {{track_title_en}} / {{track_title_ja}}".
+  line_format: "{{start}} {{track_title_en}} / {{track_title_ja}}"
+  header: "⏱ Chapters"
+
+# Full body template. Blank lines are significant (YouTube renders them).
+body: |
+  {{scene_description_en}}
+  {{scene_description_ja}}
+
+  {{chapters}}
+
+  {{ai_disclosure}}
+
+  {{channel_promo}}
+
+  #{{genre_hashtag_1}} #{{genre_hashtag_2}} #{{scene_hashtag}}
+
+# Fields the finisher LLM fills in (ADR-0034 §(2) "LLM 生成対象フィールド").
+# Static blocks (ai_disclosure, channel_promo, chapters scaffold) are excluded.
+llm_fields:
+  - name: scene_description_en
+    max_chars: 120
+    note: English scene description, contributes to the SEO-critical first lines.
+  - name: scene_description_ja
+    max_chars: 120
+    note: Japanese scene description, mirrors the English line.
+  - name: track_title_en
+    repeat: 6
+    max_chars: 20
+    note: Per-track English title (Track 1-6).
+  - name: track_title_ja
+    repeat: 6
+    max_chars: 10
+    note: Per-track Japanese title (Track 1-6).
+  - name: genre_hashtag_1
+    note: Primary genre hashtag from the genre dictionary.
+  - name: genre_hashtag_2
+    note: Secondary genre hashtag (genre dictionary or derived).
+  - name: scene_hashtag
+    note: Mood-based scene hashtag, LLM-generated.

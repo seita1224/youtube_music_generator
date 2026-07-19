@@ -1,0 +1,12 @@
+# Thumbnail template — synthwave (ADR-0034 §(3)).
+# Genre-specific font / palette overrides for the Pillow overlay. Shared
+# geometry lives in _shared/layout.json and _shared/badge.json.
+version: 1
+genre: "synthwave"           # canonical genres.name (data-model.md)
+font_primary: "VT323"
+font_secondary: "Noto Sans JP"
+color_text: "#FF006E"
+color_outline: "#3A0CA3"
+outline_width: 6
+text_position: "center-bottom"
+genre_badge_color: "#1A1A1A"
