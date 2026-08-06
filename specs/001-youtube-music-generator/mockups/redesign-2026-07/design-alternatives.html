@@ -1,0 +1,479 @@
+<title>YMG 画面設計 3案比較</title>
+<style>
+  :root{
+    --bg:#0A0C13; --panel:#101322; --panel2:#161A2C;
+    --line:rgba(165,175,215,.13); --line-soft:rgba(165,175,215,.07);
+    --text:#E8EAF6; --muted:#9AA1BC; --dim:#6B7290;
+    --accent:#8B5CF6; --accent-hi:#A78BFA; --accent-soft:rgba(139,92,246,.14);
+    --cyan:#38C8E8; --good:#3DD68C; --warn:#F5B84D; --red:#F0426B;
+    --sans:Inter,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",Meiryo,system-ui,sans-serif;
+    --mono:"Geist Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  }
+  html{color-scheme:dark}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.65;margin:0}
+  button{font-family:inherit;cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px;border-radius:4px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .wrap{max-width:1280px;margin:0 auto;padding:36px 26px 90px}
+  .eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent-hi);font-weight:600}
+  .hd h1{font-size:24px;margin:8px 0 10px;font-weight:700;letter-spacing:.005em;text-wrap:balance}
+  .hd p{color:var(--muted);max-width:74ch;margin:0 0 26px;font-size:13.5px}
+  .panel{background:var(--panel);border:1px solid var(--line-soft);border-radius:12px}
+
+  /* 比較表 */
+  .cmp{padding:6px 18px 14px;margin-bottom:28px;overflow-x:auto}
+  .cmp table{border-collapse:collapse;width:100%;min-width:940px;font-size:12.5px}
+  .cmp th{text-align:left;padding:11px 12px 8px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);white-space:nowrap;vertical-align:bottom}
+  .cmp th .abc{display:block;font-size:13px;letter-spacing:0;text-transform:none;color:var(--text);font-weight:650;margin-bottom:2px}
+  .cmp td{padding:9px 12px;border-bottom:1px solid var(--line-soft);color:var(--muted);vertical-align:top}
+  .cmp tr:last-child td{border-bottom:none}
+  .cmp td:first-child{color:var(--dim);white-space:nowrap;font-size:11.5px}
+  .cmp .now{color:var(--dim)}
+  .cmp .hot{color:var(--good)}
+
+  /* タブ */
+  .tabs{position:sticky;top:0;z-index:30;display:flex;gap:9px;padding:12px 0;background:rgba(10,12,19,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft);margin-bottom:26px}
+  .tabs button{border:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:13px;font-weight:600;border-radius:99px;padding:8px 18px}
+  .tabs button:hover{color:var(--text)}
+  .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  .alt{display:none}
+  .alt.active{display:block}
+  .alt h2{font-size:18px;margin:0 0 4px;font-weight:700}
+  .alt .tagline{display:block;font-size:13px;color:var(--accent-hi);font-weight:500;margin-bottom:12px}
+  .pts{margin:0 0 4px;padding-left:19px;color:var(--muted);font-size:13px}
+  .pts li{margin-bottom:4px}
+  .pts b{color:var(--text);font-weight:600}
+
+  .frame{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:20px 0;background:#0C0F19;box-shadow:0 24px 70px rgba(0,0,0,.45)}
+  .mini-top{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line-soft);font-size:12.5px;background:rgba(255,255,255,.015)}
+  .mini-top b{font-size:14px;letter-spacing:.06em}
+  .mini-nav{color:var(--dim)}
+  .mini-nav i{font-style:normal;color:var(--text);border-bottom:2px solid var(--accent);padding-bottom:2px}
+  .lvl{margin-left:auto;font-size:11.5px;border:1px solid rgba(139,92,246,.45);color:var(--accent-hi);background:var(--accent-soft);border-radius:99px;padding:4px 11px;white-space:nowrap}
+  .lvl .k{font-family:var(--mono);font-weight:700}
+  .amb{font-size:11.5px;color:var(--dim);white-space:nowrap}
+  .amb .okd{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:5px;box-shadow:0 0 7px var(--good)}
+
+  .pill{display:inline-flex;align-items:center;font-size:10.5px;line-height:1;padding:3.5px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .pill.ok{background:rgba(61,214,140,.1);border-color:rgba(61,214,140,.35);color:var(--good)}
+  .btn{border-radius:8px;font-size:12.5px;font-weight:600;padding:7px 14px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.ghost-red{background:none;border-color:rgba(240,66,107,.5);color:var(--red)}
+  .btn.sm{font-size:11.5px;padding:5px 11px;font-weight:500}
+  .mini-thumb{border-radius:6px;background:linear-gradient(135deg,var(--g1),var(--g2));flex:none}
+
+  /* ── 案A: フィード ── */
+  .feed-wrap{display:grid;grid-template-columns:1fr 268px;gap:0}
+  @media(max-width:900px){.feed-wrap{grid-template-columns:1fr}}
+  .feed{padding:20px 26px 28px;border-right:1px solid var(--line-soft);max-width:760px}
+  .f-date{font-size:11.5px;letter-spacing:.12em;color:var(--dim);font-weight:600;margin:18px 0 12px;text-transform:uppercase}
+  .f-date:first-child{margin-top:0}
+  .f-row{display:flex;gap:12px;align-items:baseline;font-size:13px;color:var(--muted);padding:7px 0;border-bottom:1px solid var(--line-soft)}
+  .f-row .f-time{font-family:var(--mono);font-size:11.5px;color:var(--dim);flex:none;width:42px}
+  .f-row .mk{flex:none;width:14px;text-align:center;font-family:var(--mono)}
+  .f-row.ok .mk{color:var(--good)}
+  .f-row.warn .mk{color:var(--warn)}
+  .f-row.run .mk{color:var(--cyan);animation:blink 1.4s ease-in-out infinite}
+  .f-row.dimr{color:var(--dim)}
+  .f-row .fprog{flex:1 1 90px;height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;align-self:center;min-width:70px}
+  .f-row .fprog i{display:block;height:100%;width:62%;background:linear-gradient(90deg,var(--cyan),var(--accent))}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .f-card{display:flex;gap:14px;border:1px solid rgba(139,92,246,.5);background:linear-gradient(120deg,rgba(139,92,246,.09),rgba(139,92,246,.02));border-radius:12px;padding:14px 16px;margin:10px 0}
+  .f-card .f-time{font-family:var(--mono);font-size:11.5px;color:var(--dim);flex:none;width:42px;padding-top:3px}
+  .f-card .f-t{font-size:13.5px;font-weight:650;margin-bottom:8px}
+  .f-card .f-meta{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .f-card .f-sub{font-size:11.5px;color:var(--dim);margin-top:9px}
+  .f-card .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .f-card.compact{align-items:center;padding:11px 16px}
+  .f-card.compact .f-t{margin:0;font-size:12.5px}
+  .rail{padding:20px 18px;display:flex;flex-direction:column;gap:12px}
+  .rail-box{border:1px solid var(--line-soft);border-radius:10px;padding:13px 15px;background:var(--panel)}
+  .rail-box h4{margin:0 0 8px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .rail-box .r-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);padding:3px 0}
+  .rail-box .r-row b{color:var(--text);font-family:var(--mono)}
+  .rail-box .r-ev{font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--line-soft)}
+  .rail-box .r-ev:last-child{border-bottom:none}
+  .rail-box .r-ev .tm{font-family:var(--mono);color:var(--dim);margin-right:7px;font-size:11px}
+
+  /* ── 案B: 番組表 ── */
+  .prog-outer{overflow-x:auto}
+  .prog-wrap{display:grid;grid-template-columns:1fr 300px;min-width:1180px}
+  .pg{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;padding:18px;border-right:1px solid var(--line-soft)}
+  .pg-day{min-width:0}
+  .pg-h{font-size:11px;color:var(--dim);font-weight:600;margin-bottom:8px;text-align:center}
+  .pg-day.today .pg-h{color:var(--cyan)}
+  .slot{border-radius:9px;padding:9px 10px;font-size:11.5px;line-height:1.45;margin-bottom:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+  .slot .s-t{display:block;font-family:var(--mono);font-size:10px;color:var(--dim);margin-bottom:2px}
+  .slot .s-m{display:block;font-size:10.5px;color:var(--dim);margin-top:3px}
+  .slot.pub{border-left:3px solid var(--good)}
+  .slot.pub .s-m{color:var(--good)}
+  .slot.gate{border-color:rgba(139,92,246,.6);background:linear-gradient(135deg,rgba(139,92,246,.14),var(--panel2));cursor:pointer}
+  .slot.gate .s-m{color:var(--accent-hi)}
+  .slot.gate.sel{box-shadow:0 0 16px rgba(139,92,246,.3);outline:1.5px solid var(--accent)}
+  .slot.gen{background:repeating-linear-gradient(45deg,var(--panel2) 0 7px,rgba(56,200,232,.06) 7px 14px);border-color:rgba(56,200,232,.35)}
+  .slot.gen .s-m{color:var(--cyan)}
+  .slot .sprog{height:3.5px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin-top:6px}
+  .slot .sprog i{display:block;height:100%;width:62%;background:var(--cyan)}
+  .slot.planl{background:none;border-style:solid;border-color:var(--line)}
+  .slot.planl .s-m{color:var(--dim)}
+  .slot.exp{outline:1.5px dashed rgba(240,66,107,.6);outline-offset:1.5px}
+  .slot.emp{background:none;border-style:dashed;color:var(--dim);text-align:center;font-size:10.5px;padding:13px 8px}
+  .drawer{padding:18px 20px}
+  .drawer .d-crumb{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);margin-bottom:10px}
+  .drawer .d-thumb{aspect-ratio:16/9;border-radius:9px;background:linear-gradient(135deg,#38C8E8,#1A1440);position:relative;margin-bottom:12px}
+  .drawer .d-thumb span{position:absolute;left:9px;bottom:7px;font-size:13px;font-weight:700;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.55)}
+  .drawer h3{font-size:14px;margin:0 0 8px;font-weight:650}
+  .drawer .chk{display:flex;gap:8px;font-size:12px;color:var(--muted);padding:2.5px 0}
+  .drawer .chk .mk{color:var(--good);font-family:var(--mono);width:13px;flex:none}
+  .drawer .d-acts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .drawer .d-link{font-size:11.5px;color:var(--accent-hi);text-decoration:underline;text-underline-offset:3px;background:none;border:none;padding:0;margin-top:12px;display:block}
+  .legend-b{display:flex;gap:18px;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--line-soft);font-size:11.5px;color:var(--dim)}
+  .legend-b .sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+  /* ── 案C: インボックス ── */
+  .in-wrap{display:grid;grid-template-columns:300px 1fr}
+  @media(max-width:900px){.in-wrap{grid-template-columns:1fr}}
+  .in-list{border-right:1px solid var(--line-soft);padding:16px 14px}
+  .in-h{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);font-weight:600;margin:6px 4px 10px}
+  .in-h b{color:var(--accent-hi);font-family:var(--mono)}
+  .in-item{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px;color:var(--text);font-size:12.5px;font-weight:600;margin-bottom:8px;line-height:1.5}
+  .in-item .kind{display:inline-block;font-size:9.5px;letter-spacing:.1em;border:1px solid rgba(139,92,246,.45);color:var(--accent-hi);border-radius:4px;padding:2px 6px;margin-bottom:5px;font-weight:600}
+  .in-item.opskind .kind{border-color:rgba(56,200,232,.4);color:var(--cyan)}
+  .in-item span.m{display:block;font-size:11px;color:var(--dim);font-weight:400}
+  .in-item.sel{border-color:var(--accent);box-shadow:0 0 14px rgba(139,92,246,.2)}
+  .in-done{font-size:11.5px;color:var(--dim);padding:5px 4px;border-bottom:1px solid var(--line-soft)}
+  .in-done:last-child{border-bottom:none}
+  .in-main{padding:22px 26px}
+  .in-kind{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-hi);font-weight:600;margin-bottom:8px}
+  .in-main h3{font-size:16px;margin:0 0 14px;font-weight:650;text-wrap:balance}
+  .in-player{aspect-ratio:16/9;max-width:520px;border-radius:10px;background:linear-gradient(135deg,#0E2233,#1A1440);display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+  .in-player .p{width:46px;height:46px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:center}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;max-width:760px;margin-bottom:18px}
+  .fact{border:1px solid var(--line-soft);border-radius:9px;padding:10px 13px;background:var(--panel)}
+  .fact .f-k{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+  .fact .f-v{font-size:13px;font-weight:600}
+  .fact .f-v .mk{color:var(--good);font-family:var(--mono)}
+  .in-acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .in-next{font-size:12px;color:var(--dim);margin-top:14px}
+  .zero-note{padding:12px 20px;border-top:1px solid var(--line-soft);font-size:12px;color:var(--dim)}
+
+  /* 強み/弱み */
+  .verdict{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0 10px}
+  @media(max-width:760px){.verdict{grid-template-columns:1fr}}
+  .v-box{border:1px solid var(--line-soft);border-radius:10px;padding:13px 16px;background:var(--panel)}
+  .v-box h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:650}
+  .v-box.plus h4{color:var(--good)}
+  .v-box.minus h4{color:var(--warn)}
+  .v-box ul{margin:0;padding-left:17px;font-size:12.5px;color:var(--muted)}
+  .v-box li{margin-bottom:4px}
+
+  .foot{margin-top:40px;border:1px solid rgba(139,92,246,.35);border-radius:12px;padding:18px 22px;background:linear-gradient(120deg,rgba(139,92,246,.07),transparent 60%)}
+  .foot h3{margin:0 0 8px;font-size:14.5px}
+  .foot p{margin:0 0 6px;font-size:13px;color:var(--muted);max-width:80ch}
+  .foot b{color:var(--text)}
+
+  @media(prefers-reduced-motion:reduce){.f-row.run .mk{animation:none}}
+</style>
+
+<div class="wrap">
+  <header class="hd">
+    <div class="eyebrow">YMG 再設計 — 画面構成の代替案</div>
+    <h1>3 つの別案 — 同じ 1 日を、違う画面で運転する</h1>
+    <p>現行案「パイプライン型」に対する、方向性の異なる 3 案。すべて同じデータ(2026-07-19、公開済み 1 本・生成中 1 本・判断待ち 2 件・自動再生成 1 件)でモックしているので、画面の思想だけを比べられます。どの案でも「承認は公開ゲート 1 点+低頻度の運営判断のみ」「プロンプト編集は独立機能」「緊急停止 UI なし」という前提は共通です。</p>
+  </header>
+
+  <div class="cmp panel">
+    <table>
+      <thead>
+        <tr>
+          <th>観点</th>
+          <th class="now"><span class="abc">現行案</span>パイプライン型</th>
+          <th><span class="abc">案A</span>作業日誌型</th>
+          <th><span class="abc">案B</span>番組表型</th>
+          <th><span class="abc">案C</span>判断インボックス型</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>中心メタファー</td><td>工場の製造ライン</td><td>作業日誌・通知フィード</td><td>放送局の週間編成表</td><td>受信箱 (inbox zero)</td></tr>
+        <tr><td>「今なにしてる?」への答え方</td><td>列の位置で見る</td><td class="hot">文章で報告してくれる</td><td>枠の色で分かる</td><td>ほぼ見せない (下部バーのみ)</td></tr>
+        <tr><td>人の判断のしかた</td><td>「公開待ち」列 → キュー画面</td><td>フィード内の判断カード</td><td>紫の枠を開いて承認</td><td class="hot">受信箱の項目を上から片づける</td></tr>
+        <tr><td>予定 (未来) の見え方</td><td>企画列のみ</td><td>右レールの予定リスト</td><td class="hot">週の枠として一望できる</td><td>見せない (判断に必要なときだけ)</td></tr>
+        <tr><td>向く自動運転レベル</td><td>L0〜L1</td><td>L0〜L2</td><td>L0〜L1</td><td>L1〜L2</td></tr>
+        <tr><td>弱点</td><td>横に長く、毎日見るには重い</td><td>ライン全体の俯瞰が弱い</td><td>工程の詳細がドロワーの奥</td><td>全体像が見えない・信頼が前提</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="a" class="on" type="button">案A 作業日誌型</button>
+    <button data-tab="b" type="button">案B 番組表型</button>
+    <button data-tab="c" type="button">案C 判断インボックス型</button>
+  </nav>
+
+  <!-- ════════════ 案A ════════════ -->
+  <section class="alt active" id="alt-a">
+    <h2>案A — 作業日誌型</h2>
+    <span class="tagline">「システムが今日やったことを、時系列の日誌で報告してくる」</span>
+    <ul class="pts">
+      <li>ホームは<b>通知フィード</b>。生成開始・完了・自動リトライ・公開が「時刻+文章」で流れる — 「何をしているのか見て分からない」への最直球の回答</li>
+      <li>人の判断も<b>フィード内の判断カード</b>で完結。公開キュー画面は持たない</li>
+      <li>画面構成: <b>日誌(ホーム) / チャンネル運営 / 分析 / プロンプト / 設定</b> の 5 画面</li>
+    </ul>
+
+    <div class="frame">
+      <div class="mini-top">
+        <b>YMG</b>
+        <span class="mini-nav"><i>日誌</i> · 運営 · 分析 · プロンプト · 設定</span>
+        <span class="lvl"><span class="k">L0</span> 監督モード</span>
+      </div>
+      <div class="feed-wrap">
+        <div class="feed">
+          <div class="f-date">7月19日 (日)</div>
+
+          <article class="f-card">
+            <span class="f-time">08:00</span>
+            <div style="min-width:0">
+              <div class="f-t">「星降る夜の環境音」が完成しました — 確認して公開してください</div>
+              <div class="f-meta">
+                <span class="mini-thumb" style="--g1:#38C8E8;--g2:#1A1440;width:96px;aspect-ratio:16/9"></span>
+                <span>
+                  <span class="pill">Ambient</span> <span class="pill ok">検査 all clear</span><br>
+                  <span style="font-size:11.5px;color:var(--dim)">30:00 · 公開予定 明日 07:00 JST</span>
+                </span>
+              </div>
+              <div class="acts">
+                <button class="btn primary" type="button">✓ 承認して公開</button>
+                <button class="btn ghost-red" type="button">却下</button>
+                <button class="btn" type="button">動画を見る</button>
+              </div>
+              <div class="f-sub">確認するまで公開されません。残り 6 日で自動見送り。</div>
+            </div>
+          </article>
+
+          <div class="f-row ok"><span class="f-time">07:00</span><span class="mk">✓</span><span>「真夜中ドライブ」を公開しました — 初速 視聴維持率 <b class="mono" style="color:var(--good)">42.1%</b></span></div>
+          <div class="f-row warn"><span class="f-time">06:41</span><span class="mk">!</span><span>Piano Solo「静寂のピアノ」トラック 3 が既存曲と一致 → 自動で作り直しています (2/3 回目)。<b style="color:var(--text)">対応は不要です</b></span></div>
+          <div class="f-row run"><span class="f-time">06:00</span><span class="mk">●</span><span>Chillhop「朝のチルホップ」音楽生成中 — トラック 4/6</span><span class="fprog"><i></i></span></div>
+          <div class="f-row"><span class="f-time">05:12</span><span class="mk" style="color:var(--good)">✓</span><span>「星降る夜の環境音」パッケージング完了 (サムネ・動画・タイトル)</span></div>
+          <div class="f-row dimr"><span class="f-time">03:00</span><span class="mk">✓</span><span>DB バックアップ完了</span></div>
+
+          <div class="f-date">7月18日 (土)</div>
+          <article class="f-card compact">
+            <span class="f-time">21:04</span>
+            <div class="f-t" style="flex:1">「黄昏シンセ波」が完成 — 確認待ち</div>
+            <button class="btn sm" type="button">確認する</button>
+          </article>
+          <div class="f-row ok"><span class="f-time">07:00</span><span class="mk">✓</span><span>「土曜のピアノ」を公開しました — 維持率 33.8%</span></div>
+        </div>
+
+        <aside class="rail">
+          <div class="rail-box">
+            <h4>今日のサマリ</h4>
+            <div class="r-row"><span>公開</span><b>1 本</b></div>
+            <div class="r-row"><span>生成中</span><b>1 本</b></div>
+            <div class="r-row"><span>判断待ち</span><b style="color:var(--accent-hi)">2 件</b></div>
+          </div>
+          <div class="rail-box">
+            <h4>これからの予定</h4>
+            <div class="r-ev"><span class="tm">20:00</span>実験枠 Future Garage の生成開始</div>
+            <div class="r-ev"><span class="tm">明日 07:00</span>公開枠 — 要確認 1 本</div>
+            <div class="r-ev"><span class="tm">明 03:00</span>翌日分の企画を自動立案</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="v-box plus"><h4>強み</h4><ul>
+        <li>「今なにしてる?」に日本語の文章で答える。読むだけで工程理解が要らない</li>
+        <li>通知(Slack)と画面が同じ構造になり、スマホからの確認とも相性がよい</li>
+        <li>判断カードがフィードに埋まるので、承認のための画面移動がゼロ</li>
+      </ul></div>
+      <div class="v-box minus"><h4>弱み</h4><ul>
+        <li>ライン全体の俯瞰(どの工程に何本あるか)は弱く、過去に流れていく</li>
+        <li>判断待ちが埋もれる可能性 → 右レールとバッジで補う必要がある</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ════════════ 案B ════════════ -->
+  <section class="alt" id="alt-b">
+    <h2>案B — 番組表型</h2>
+    <span class="tagline">「チャンネルを放送局として運営する。メイン画面は週間編成表」</span>
+    <ul class="pts">
+      <li>メイン画面は<b>投稿枠のカレンダー</b>。過去(実績)・今日(進行中)・未来(予定)が同じ 1 枚に載る</li>
+      <li>枠の色が状態: 緑縁=公開済み / <b style="color:var(--accent-hi)">紫=要確認</b> / 縞=生成・検査中 / 輪郭=企画済み / 点線=未企画</li>
+      <li>枠をクリックすると右ドロワーにその動画のすべて(企画・検査・承認)。<b>承認=「明日の枠を確認する」操作</b></li>
+      <li>画面構成: <b>編成表(ホーム) / 分析 / プロンプト / 設定</b> の 4 画面。ジャンル配分・頻度の運営設定は編成表に内包</li>
+    </ul>
+
+    <div class="frame">
+      <div class="mini-top">
+        <b>YMG</b>
+        <span class="mini-nav"><i>編成表</i> · 分析 · プロンプト · 設定</span>
+        <span class="mono" style="color:var(--dim);font-size:12px">◀ 7/18 (土) — 7/24 (金) ▶</span>
+        <span class="lvl"><span class="k">L0</span> 監督モード</span>
+      </div>
+      <div class="prog-outer">
+        <div class="prog-wrap">
+          <div class="pg">
+            <div class="pg-day">
+              <div class="pg-h">土 18</div>
+              <div class="slot pub"><span class="s-t">07:00</span>土曜のピアノ<span class="s-m">公開済み · 33.8%</span></div>
+            </div>
+            <div class="pg-day today">
+              <div class="pg-h">日 19 (今日)</div>
+              <div class="slot pub"><span class="s-t">07:00</span>真夜中ドライブ<span class="s-m">公開済み · 42.1%</span></div>
+              <div class="slot planl exp"><span class="s-t">20:00</span>夜更けのガラージュ<span class="s-m">実験枠 · 生成予定</span></div>
+            </div>
+            <div class="pg-day">
+              <div class="pg-h">月 20</div>
+              <div class="slot gate sel"><span class="s-t">07:00</span>星降る夜の環境音<span class="s-m">要確認 — 完成済み</span></div>
+            </div>
+            <div class="pg-day">
+              <div class="pg-h">火 21</div>
+              <div class="slot gate"><span class="s-t">07:00</span>黄昏シンセ波<span class="s-m">要確認 — 完成済み</span></div>
+            </div>
+            <div class="pg-day">
+              <div class="pg-h">水 22</div>
+              <div class="slot gen"><span class="s-t">07:00</span>朝のチルホップ<span class="s-m">生成中 4/6</span><span class="sprog"><i></i></span></div>
+            </div>
+            <div class="pg-day">
+              <div class="pg-h">木 23</div>
+              <div class="slot gen"><span class="s-t">07:00</span>静寂のピアノ<span class="s-m">検査中 — 自動再生成</span></div>
+            </div>
+            <div class="pg-day">
+              <div class="pg-h">金 24</div>
+              <div class="slot emp">07:00<br>前日 03:00 に自動で企画</div>
+            </div>
+          </div>
+
+          <aside class="drawer">
+            <div class="d-crumb">月 20 · 07:00 の枠</div>
+            <div class="d-thumb"><span>星降る夜の環境音</span></div>
+            <h3>【Ambient】星降る夜の環境音 — Deep Focus Mix (30 min)</h3>
+            <div class="chk"><span class="mk">✓</span>AI 生成の開示 (containsSyntheticMedia)</div>
+            <div class="chk"><span class="mk">✓</span>指紋チェック 6/6 CLEAR</div>
+            <div class="chk"><span class="mk">✓</span>音量正規化 · メタデータ検証</div>
+            <div class="d-acts">
+              <button class="btn primary" type="button">✓ 承認して公開</button>
+              <button class="btn ghost-red" type="button">却下</button>
+            </div>
+            <button class="d-link" type="button">この枠の企画・トラック 6 件を見る →</button>
+            <button class="d-link" type="button">この枠に使われたプロンプト (planner v3) →</button>
+          </aside>
+        </div>
+      </div>
+      <div class="legend-b">
+        <span><span class="sw" style="background:rgba(61,214,140,.4)"></span>公開済み</span>
+        <span><span class="sw" style="background:rgba(139,92,246,.5)"></span>要確認 (人の判断)</span>
+        <span><span class="sw" style="background:repeating-linear-gradient(45deg,#161A2C 0 3px,rgba(56,200,232,.35) 3px 6px)"></span>生成・検査中</span>
+        <span><span class="sw" style="border:1px solid var(--line);background:none"></span>企画済み</span>
+        <span><span class="sw" style="border:1px dashed var(--line);background:none"></span>未企画 (自動)</span>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="v-box plus"><h4>強み</h4><ul>
+        <li>「複数ジャンルを定期的に投稿するチャンネル運営」というコンセプトに最も素直な表現</li>
+        <li>未来の枠と過去の実績が同じ画面に載り、投稿ペースの把握と計画変更が直感的</li>
+        <li>ジャンル配分・頻度の調整が「枠の割り当て」そのものとして操作できる</li>
+      </ul></div>
+      <div class="v-box minus"><h4>弱み</h4><ul>
+        <li>工程の詳細(トラック単位の進捗・失敗)はドロワーの奥に隠れる</li>
+        <li>1 日 1〜2 本だと表が疎になり、密度が出るのは投稿数を増やしてから</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ════════════ 案C ════════════ -->
+  <section class="alt" id="alt-c">
+    <h2>案C — 判断インボックス型</h2>
+    <span class="tagline">「人の仕事は判断だけ。アプリは判断待ちの受信箱になる」</span>
+    <ul class="pts">
+      <li>ホームは<b>受信箱</b>。公開確認・ジャンル昇格などシステムが人に求める判断だけが並ぶ</li>
+      <li>選ぶと中央に<b>判断に必要な材料が全部その場に</b>出る。決めたら次へ — inbox zero で今日は終わり</li>
+      <li>工程の稼働状況はあえて前面に出さず、下部のステータスバーに集約(詳細は読み取り専用のステータス画面)</li>
+      <li>画面構成: <b>受信箱(ホーム) / ステータス / チャンネル運営 / 分析 / プロンプト / 設定</b></li>
+    </ul>
+
+    <div class="frame">
+      <div class="mini-top">
+        <b>YMG</b>
+        <span class="mini-nav"><i>受信箱</i> · ステータス · 運営 · 分析 · プロンプト · 設定</span>
+        <span class="lvl"><span class="k">L1</span> 事後確認モード</span>
+      </div>
+      <div class="in-wrap">
+        <aside class="in-list">
+          <div class="in-h">判断待ち <b>3</b></div>
+          <button class="in-item sel" type="button">
+            <span class="kind">公開確認</span><br>
+            星降る夜の環境音
+            <span class="m">Ambient · 完成 3 時間前</span>
+          </button>
+          <button class="in-item" type="button">
+            <span class="kind">公開確認</span><br>
+            黄昏シンセ波
+            <span class="m">Synthwave · 完成 昨日 21:04</span>
+          </button>
+          <button class="in-item opskind" type="button">
+            <span class="kind">運営提案</span><br>
+            Future Garage を主力に昇格
+            <span class="m">週次分析より · 維持率 46.3% で首位</span>
+          </button>
+          <div class="in-h" style="margin-top:16px">今日 済み</div>
+          <div class="in-done">✓ 「真夜中ドライブ」の公開を承認 (06:52)</div>
+          <div class="in-done">✓ planner プロンプトを v3 に切替 (昨日)</div>
+        </aside>
+
+        <main class="in-main">
+          <div class="in-kind">公開確認 · 1 / 3 件</div>
+          <h3>【Ambient】星降る夜の環境音 — Deep Focus Mix (30 min)</h3>
+          <div class="in-player"><span class="p"><svg width="16" height="16" viewBox="0 0 20 20" fill="#fff"><path d="M4 2.5l13 7.5-13 7.5z"/></svg></span></div>
+          <div class="facts">
+            <div class="fact"><div class="f-k">自動検査</div><div class="f-v"><span class="mk">✓</span> 4 項目すべて合格</div></div>
+            <div class="fact"><div class="f-k">公開枠</div><div class="f-v">明日 07:00 JST</div></div>
+            <div class="fact"><div class="f-k">Ambient の平均維持率</div><div class="f-v mono">40.6%</div></div>
+            <div class="fact"><div class="f-k">類似動画の実績</div><div class="f-v"><span class="mono">987</span> 再生 · 維持率 <span class="mono">39.8%</span></div></div>
+          </div>
+          <div class="in-acts">
+            <button class="btn primary" type="button">✓ 承認して公開</button>
+            <button class="btn ghost-red" type="button">却下</button>
+            <button class="btn" type="button">あとで</button>
+          </div>
+          <div class="in-next">これが済むと残り 2 件。ぜんぶ片づけば、今日やることはありません。</div>
+        </main>
+      </div>
+      <div class="zero-note">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:6px;box-shadow:0 0 7px var(--good)"></span>
+        ライン正常 — 生成中 1 (朝のチルホップ 4/6) · 検査中 1 (自動再生成) · 今日公開 1。判断待ちが 0 件の日は、開くと「今日やることはありません」だけが表示される。
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="v-box plus"><h4>強み</h4><ul>
+        <li>「承認がめんどくさい」への最短回答。開けばやることだけがあり、ゼロなら閉じてよい</li>
+        <li>判断単位に材料(検査結果・実績・類似動画)が同梱され、迷わず決められる</li>
+        <li>運営提案(ジャンル昇格など)も同じ受信箱に届くので、承認の窓口が完全に 1 つ</li>
+      </ul></div>
+      <div class="v-box minus"><h4>弱み</h4><ul>
+        <li>工程・ライン全体の俯瞰は最弱。システムへの信頼が前提(L1 以上向き)</li>
+        <li>「眺めて楽しい」要素がなく、チャンネルの手応えは分析画面頼みになる</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <h3>組み合わせの示唆</h3>
+    <p>4 案は排他ではありません。<b>B の編成表をホームにして C の受信箱をヘッダー常設にする</b>(編成=眺める場所、受信箱=手を動かす場所)、<b>現行パイプライン型に A の日誌を「詳細ログ」として添える</b>、などの合成が可能です。</p>
+    <p>コンセプト「チャンネル運営システム」への素直さでは <b>案B</b>、承認疲れの解消では <b>案C</b> が最有力。現行パイプライン型は「工程を運転する画面」であり、開発・検証期には最も情報量が多い一方、安定運用期には過剰になります。</p>
+  </footer>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tabs button');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(b => b.classList.toggle('on', b === t));
+    document.querySelectorAll('.alt').forEach(s => s.classList.toggle('active', s.id === 'alt-' + t.dataset.tab));
+  }));
+</script>

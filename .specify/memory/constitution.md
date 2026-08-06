@@ -10,7 +10,8 @@ YouTube 規約 / 著作権 / AI 開示は **常に最優先**。 効率や速度
 
 - 全動画投稿時に `status.containsSyntheticMedia=true` を必須化する(ADR-0020)。 投稿前バリデーション層が未設定を検知したら投稿を停止する
 - 投稿前に AcoustID + Chromaprint で全 6 トラックの指紋プレチェックを行う(ADR-0005)。 NG なら該当トラックを再生成、 連続 3 回ヒットでジャンル一時停止
-- コンプラ事故時の即時停止手段(`make panic-stop`)を運用ツールとして常備する(ADR-0031)
+- 停止手段(CLI + Slack から到達できるシステム状態 `publish_paused` / `stopped`)を常備する(ADR-0044)。 各工程の開始直前と公開 API 呼び出し直前で必ず参照し、 ここを通らない実行経路を作らない
+- compliance 事象では**人の操作を待たず自動で**停止する(ADR-0044): `publish_paused` + 該当動画 private 化 + 自動運転レベルの L0 降格 + 通知
 - 検出されないことを「OK」とみなさない。 検出不能なグレーは事前回避する
 
 **根拠**: 動機 C(マネタイズ)+ AI 動画規制感応度。 不可逆な BAN や法的問題は回復コストが運用全体を上回る。
@@ -26,22 +27,25 @@ Critical path:
 - OAuth トークン Fernet 暗号化 / 復号
 - LLM 出力 Pydantic スキーマ検証
 - directive parser
-- `make panic-stop` の YouTube private 化
+- compliance 自動停止経路(`publish_paused` への遷移 + 該当動画 private 化、 ADR-0044)
+- 公開遷移の不変条件(ADR-0045 INV-2: AI 開示 ∧ 指紋 CLEAR ∧ 承認記録 ∧ 公開ブロック無し ∧ システム `running`)
+- 成果物の無効化規則(ADR-0046: 依存 DAG に従う破棄と承認失効)
 
 Critical path 外: PoC コードはテスト免除可、 frontend UI は best effort、 集計クエリはスナップショットで十分。
 
 **根拠**: 1 人運用 + 自動投稿で「壊れたことを誰も検知しない」状況を避ける。 ただし全部 80% にすると運用負担で続かない。
 
-### III. dryrun-First Operational Safety (NON-NEGOTIABLE)
+### III. Staged Autonomy with Reversibility (NON-NEGOTIABLE)
 
-**投稿という不可逆アクションは人間の一手を挟む**(ADR-0007、 ADR-0025、 ADR-0031)。
+**投稿という不可逆アクションは、 人間の一手か、 実績で解錠された自律と取り消し手段のいずれかで守る**(ADR-0042、 ADR-0043、 ADR-0044)。
 
-- MVP に dryrun モードを必須機能として実装する
-- 機械再起動後の scheduler は **手動 enable**(自動再開しない)
-- 新ジャンル / 新テンプレ投入時は dryrun 経由を経る
-- dryrun_outputs に明示的な state(pending/approved/rejected/auto_expired/posted)を持たせ、 否認理由を改善計画 LLM の入力に活用する
+- 既定は **L0(公開前に必ず人が承認する)**。 自動運転レベルを上げるには実績条件の充足を要する(ADR-0043)。 宣言だけで上げられる経路を作らない
+- 自動公開(L1 / L2)を許すのは、 **取り消し手段(YouTube private 化)と死活監視(daily heartbeat)が機能している場合に限る**(ADR-0043、 ADR-0044)
+- **降格はいつでも無条件・即時**。 停止・降格に摩擦を作らない
+- 人の判断は公開ゲート + 運営判断の 2 種のみとし、 形骸化する承認を増やさない(ADR-0042)
+- 却下理由は次回の企画 LLM の入力に活用する
 
-**根拠**: AI 自動生成の暴走 / LLM の hallucination による事故を、 構造的に「人間が止められる」状態にしておく。
+**根拠**: AI 自動生成の暴走 / LLM の hallucination による事故を構造的に止められる状態を保つ。 ただし形骸化した承認は「止められる」を提供しない。 実効性のある安全装置は、 実績に基づく自律の解錠・即時の降格・確実な取り消し手段の 3 点である。
 
 ### IV. Provider / Resource Abstraction
 
@@ -107,14 +111,15 @@ Critical path 外: PoC コードはテスト免除可、 frontend UI は best ef
 
 ### Storage / Backup
 
-- ストレージは fsspec 抽象化、 楽曲 / サムネは永続、 投稿動画は posted 後 N 日でローカル削除 (ADR-0022, ADR-0025)
-- バックアップはローカルセカンダリディスクのみ、 オフサイトなし (ADR-0026)。 Fernet 鍵はバックアップ対象外
+- ストレージは fsspec 抽象化 (ADR-0022)。 保持期間は ADR-0049: 音源 / サムネ / メタデータ / ログ / プロンプトは永続、 公開済み動画は 90 日、 やり直しの旧世代は 7 日、 終端枠(見送り / 取り下げ / 却下)の成果物は 30 日
+- バックアップはローカルセカンダリディスクのみ、 オフサイトなし (ADR-0026)。 対象は永続保持のもののみ。 Fernet 鍵はバックアップ対象外
 
 ### Security
 
 - OAuth トークンは PostgreSQL に Fernet 対称鍵暗号化 (ADR-0012)
 - Fernet 鍵は `.env`、 `.gitignore` で除外、 リポジトリには `.env.example` のみ
-- 管理 UI は Basic 認証(LAN 内信頼前提、 ADR-0013)
+- 管理 UI はセッション認証 BFF + backend Basic (ADR-0013)。 LAN 内でも認証は必須とする(ADR-0050)
+- 停止操作(`publish_paused` / `stopped`)は CLI + Slack のみに置く。 管理 UI からは状態の表示のみ (ADR-0044)
 
 ## Development Workflow
 
@@ -133,7 +138,7 @@ Critical path 外: PoC コードはテスト免除可、 frontend UI は best ef
 ### Deploy Discipline
 
 - デプロイは Makefile 経由(`make deploy`)、 自動デプロイは行わない (ADR-0031)
-- マシン reboot 後の scheduler は手動 enable
+- マシン reboot 後の scheduler は**自動再開**する。 停止は `system_state`(`publish_paused` / `stopped`)でのみ表現し、 再起動で暗黙に解除されない (ADR-0044)
 - `make migrate` 前に自動 `pg_dump`、 down migration は書かない
 - ロールバックは `git revert` + `make deploy`、 release tag は使わない
 
@@ -148,9 +153,13 @@ PR merge 前に以下が green になること:
 
 ## Governance
 
-- 本憲法は ADR-0001 〜 0034 を礎に成立する
+- 本憲法は ADR-0001 〜 0050 を礎に成立する
 - 原則(I 〜 VII)を覆す提案は新規 ADR + 本書改版を伴う。 ADR 単独で原則を上書きできない
 - アーキテクチャ制約 / 開発ワークフロー / 品質ゲートは ADR 経由で進化可能、 個別 ADR で更新する
 - 本書と個別 ADR が矛盾した場合、 原則(NON-NEGOTIABLE 含む)が上、 アーキテクチャ制約以下は個別 ADR が上
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-26 | **Last Amended**: 2026-05-26
+### 改版履歴
+
+- **2.0.0** (2026-07-25): 枠中心の再設計 (ADR-0041〜0050) に伴う改版。 Principle III を「dryrun-First」から「Staged Autonomy with Reversibility」へ全面改訂(自動公開 L1 / L2 の許容と、 その条件の明文化)。 Principle I の停止手段を `make panic-stop` から 2 段階のシステム状態 + compliance 自動停止へ置換。 Principle II の critical path に公開遷移の不変条件と成果物無効化規則を追加。 Storage / Deploy / Security の各制約を更新
+
+**Version**: 2.0.0 | **Ratified**: 2026-05-26 | **Last Amended**: 2026-07-25

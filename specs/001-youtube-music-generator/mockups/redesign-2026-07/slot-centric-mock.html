@@ -1,0 +1,1403 @@
+<meta charset="utf-8">
+<title>YMG 再設計モック</title>
+<style>
+  :root{
+    --bg:#0A0C13;
+    --panel:#101322;
+    --panel2:#161A2C;
+    --line:rgba(165,175,215,.13);
+    --line-soft:rgba(165,175,215,.07);
+    --text:#E8EAF6;
+    --muted:#9AA1BC;
+    --dim:#6B7290;
+    --accent:#8B5CF6;
+    --accent-hi:#A78BFA;
+    --accent-soft:rgba(139,92,246,.14);
+    --cyan:#38C8E8;
+    --good:#3DD68C;
+    --warn:#F5B84D;
+    --red:#F0426B;
+    --red-soft:rgba(240,66,107,.12);
+    --sans:Inter,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",Meiryo,system-ui,sans-serif;
+    --mono:"Geist Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+    --r:10px;
+  }
+  html{color-scheme:dark}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.6;margin:0}
+  button{font-family:inherit;cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px;border-radius:4px}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---------- app shell ---------- */
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:204px;flex:none;border-right:1px solid var(--line-soft);padding:20px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;box-sizing:border-box}
+  .logo{display:flex;align-items:baseline;gap:8px;padding:0 10px 12px}
+  .logo b{font-size:17px;letter-spacing:.06em}
+  .logo span{font-size:10.5px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase}
+  .nav-sec{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);padding:14px 10px 5px;font-weight:600}
+  .nav-btn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;border-left:2px solid transparent;color:var(--muted);padding:9px 10px;font-size:13.5px;border-radius:0 8px 8px 0}
+  .nav-btn:hover{color:var(--text);background:rgba(255,255,255,.03)}
+  .nav-btn.active{color:var(--text);border-left-color:var(--accent);background:linear-gradient(90deg,var(--accent-soft),transparent 70%)}
+  .nav-btn .nv-ic{width:17px;height:17px;flex:none;opacity:.85}
+  .nav-badge{margin-left:auto;background:var(--accent);color:#fff;font-size:10.5px;line-height:1;padding:3px 7px;border-radius:99px;font-weight:600}
+  .side-foot{margin-top:auto;padding:12px 10px;border-top:1px solid var(--line-soft);font-size:12px;color:var(--dim);display:flex;justify-content:space-between;align-items:center}
+  .side-foot button{background:none;border:none;color:var(--dim);font-size:12px;padding:2px 4px}
+  .side-foot button:hover{color:var(--text)}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--line-soft);background:rgba(10,12,19,.82);backdrop-filter:blur(10px)}
+  .topbar h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.01em}
+  .topbar .sub{font-size:12px;color:var(--dim)}
+  .top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .status-chip{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:5px 12px;background:var(--panel)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good)}
+  .level-chip{display:flex;align-items:center;gap:8px;font-size:12px;border:1px solid rgba(139,92,246,.45);color:var(--accent-hi);background:var(--accent-soft);border-radius:99px;padding:5px 12px}
+  .level-chip b{font-family:var(--mono);font-size:12px}
+  .level-chip button{background:none;border:none;color:var(--accent-hi);font-size:11px;text-decoration:underline;text-underline-offset:3px;padding:0}
+
+  .content{padding:24px 26px 60px;max-width:1460px;width:100%;box-sizing:border-box;margin:0 auto}
+  .screen{display:none}
+  .screen.active{display:block}
+
+  /* ---------- shared ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--r)}
+  .eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:1;padding:4px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .pill.genre{font-weight:600;border:none;color:#0A0C13}
+  .pill.role-main{background:var(--accent-soft);border-color:rgba(139,92,246,.4);color:var(--accent-hi)}
+  .pill.role-ext{background:rgba(56,200,232,.1);border-color:rgba(56,200,232,.35);color:var(--cyan)}
+  .pill.role-exp{background:var(--red-soft);border-color:rgba(240,66,107,.4);color:var(--red)}
+  .pill.ok{background:rgba(61,214,140,.1);border-color:rgba(61,214,140,.35);color:var(--good)}
+  .pill.warn{background:rgba(245,184,77,.1);border-color:rgba(245,184,77,.4);color:var(--warn)}
+  .pill.gatep{background:var(--accent-soft);border-color:rgba(139,92,246,.5);color:var(--accent-hi)}
+  .btn{border-radius:8px;font-size:13px;font-weight:600;padding:8px 16px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+  .btn:hover{border-color:rgba(165,175,215,.3)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#9D74F8}
+  .btn.ghost-red{background:none;border-color:rgba(240,66,107,.5);color:var(--red)}
+  .btn.ghost-red:hover{background:var(--red-soft)}
+  .btn.sm{font-size:12px;padding:5px 11px;font-weight:500}
+  .mock-note{margin-top:26px;border:1px dashed rgba(165,175,215,.25);border-radius:var(--r);padding:13px 16px;font-size:12.5px;color:var(--muted)}
+  .mock-note b{color:var(--text);font-weight:600}
+  .mock-note .eyebrow{display:block;margin-bottom:4px;color:var(--accent-hi)}
+  .plink{background:none;border:none;color:var(--accent-hi);font-size:11px;text-align:left;padding:2px 0;text-decoration:underline;text-underline-offset:3px}
+  .plink:hover{color:#C4B5FD}
+  .line-head{display:flex;align-items:center;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+  .line-head h2{font-size:15px;margin:0;font-weight:600}
+  .line-head .stat{font-size:12.5px;color:var(--muted)}
+  .line-head .stat b{color:var(--text)}
+  .lv-note{font-size:11.5px;color:var(--dim)}
+  .steps{display:flex;flex-direction:column;gap:4px;font-size:12px}
+  .steps .st{display:flex;gap:8px;align-items:baseline;color:var(--muted)}
+  .steps .st .mk{width:14px;flex:none;text-align:center;font-family:var(--mono)}
+  .st.done .mk{color:var(--good)}
+  .st.run .mk{color:var(--accent-hi);animation:blink 1.4s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .kv{display:flex;justify-content:space-between;gap:14px;font-size:12.5px;padding:5.5px 0;border-bottom:1px solid var(--line-soft)}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--dim)}
+  .kv .v{color:var(--text);text-align:right}
+
+  /* ---------- 編成表 (ホーム) ---------- */
+  .attn-banner{display:flex;align-items:center;gap:12px;border:1px solid rgba(139,92,246,.4);background:var(--accent-soft);border-radius:var(--r);padding:11px 16px;font-size:13px;margin-bottom:18px;flex-wrap:wrap}
+  .attn-banner .lv{font-family:var(--mono);font-weight:700;color:var(--accent-hi)}
+  .attn-banner .plink{font-size:12.5px}
+  .sch-outer{overflow-x:auto}
+  .pg{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;padding:18px;min-width:1080px}
+  .pg-h{font-size:11px;color:var(--dim);font-weight:600;margin-bottom:8px;text-align:center}
+  .pg-day.today .pg-h{color:var(--cyan)}
+  .pslot{display:block;width:100%;box-sizing:border-box;text-align:left;font-family:inherit;border-radius:9px;padding:9px 10px;font-size:11.5px;line-height:1.45;margin-bottom:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+  .pslot .s-t{display:block;font-family:var(--mono);font-size:10px;color:var(--dim);margin-bottom:2px}
+  .pslot .s-m{display:block;font-size:10.5px;color:var(--dim);margin-top:3px}
+  .pslot.pub{border-left:3px solid var(--good)}
+  .pslot.pub .s-m{color:var(--good)}
+  .pslot.gate{border-color:rgba(139,92,246,.6);background:linear-gradient(135deg,rgba(139,92,246,.14),var(--panel2))}
+  .pslot.gate .s-m{color:var(--accent-hi)}
+  .pslot.gate.sel{box-shadow:0 0 16px rgba(139,92,246,.3);outline:1.5px solid var(--accent)}
+  .pslot.gen{background:repeating-linear-gradient(45deg,var(--panel2) 0 7px,rgba(56,200,232,.06) 7px 14px);border-color:rgba(56,200,232,.35)}
+  .pslot.gen .s-m{color:var(--cyan)}
+  .pslot .sprog{display:block;height:3.5px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin-top:6px}
+  .pslot .sprog i{display:block;height:100%;width:62%;background:var(--cyan)}
+  .pslot.planl{background:none}
+  .pslot.planl .s-m{color:var(--dim)}
+  .pslot.pexp{outline:1.5px dashed rgba(240,66,107,.6);outline-offset:1.5px}
+  .pslot.emp{background:none;border-style:dashed;color:var(--dim);text-align:center;font-size:10.5px;padding:13px 8px}
+  .legend-b{display:flex;gap:18px;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--line-soft);font-size:11.5px;color:var(--dim)}
+  .legend-b .sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+  /* ---------- 公開枠エディタ ---------- */
+  .srow{display:flex;gap:8px;align-items:center;padding:5px 0}
+  .sel{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit}
+  .sel.grow{flex:1;min-width:150px;max-width:280px}
+  .row-del{background:none;border:none;color:var(--dim);font-size:13px;padding:4px 7px;border-radius:6px}
+  .row-del:hover{color:var(--red);background:var(--red-soft)}
+
+  /* ---------- 枠詳細 ---------- */
+  .sd-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 16px}
+  .sd-head h2{font-size:18px;margin:0;font-weight:700}
+  .sd-grid{display:grid;grid-template-columns:330px 1fr;gap:16px;align-items:start}
+  @media(max-width:1000px){.sd-grid{grid-template-columns:1fr}}
+  .sd-card{padding:16px 18px;margin-bottom:14px}
+  .sd-card h3{margin:0 0 10px;font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:650}
+  .sd-card .lead{font-size:12.5px;color:var(--muted);margin:0 0 12px}
+  .track{display:flex;gap:10px;font-size:12px;color:var(--muted);padding:3px 0;align-items:baseline}
+  .track .t{font-family:var(--mono);color:var(--dim);flex:none;width:22px}
+  .track .d{margin-left:auto;font-family:var(--mono);color:var(--dim);flex:none}
+  .track .c{color:var(--good);font-family:var(--mono);flex:none;width:14px}
+  .preview{padding:18px}
+  .player{position:relative;aspect-ratio:16/9;border-radius:var(--r);background:linear-gradient(135deg,#0E2233,#1A1440);display:flex;align-items:center;justify-content:center;margin-bottom:14px;overflow:hidden}
+  .player .waves{position:absolute;inset:auto 0 0 0;height:26%;background:repeating-linear-gradient(90deg,rgba(255,255,255,.2) 0 3px,transparent 3px 10px);mask-image:linear-gradient(0deg,#000,transparent);-webkit-mask-image:linear-gradient(0deg,#000,transparent)}
+  .play-ic{width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+  .play-ic svg{margin-left:4px}
+  .pv-title{font-size:16.5px;font-weight:650;margin:0 0 4px;text-wrap:balance}
+  .pv-desc{font-size:12.5px;color:var(--muted);margin:0 0 14px;max-width:62ch}
+  .pv-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+  @media(max-width:760px){.pv-cols{grid-template-columns:1fr}}
+  .pv-box{border:1px solid var(--line-soft);border-radius:8px;padding:12px 14px}
+  .pv-box h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .chap{display:flex;gap:10px;font-size:12px;color:var(--muted);padding:2.5px 0}
+  .chap .t{font-family:var(--mono);color:var(--dim);flex:none}
+  .chk{display:flex;gap:8px;align-items:center;font-size:12.5px;padding:3px 0;color:var(--muted)}
+  .chk .mk{color:var(--good);font-family:var(--mono);width:14px;flex:none}
+  .gate-actions{display:flex;gap:10px;align-items:center;border-top:1px solid var(--line-soft);padding-top:16px;flex-wrap:wrap}
+  .gate-actions .note{font-size:11.5px;color:var(--dim);flex-basis:100%}
+  .reject-area{display:none;flex-basis:100%;margin-top:6px}
+  .reject-area.open{display:block}
+  .reject-area textarea{width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:inherit;font-size:13px;padding:10px 12px;min-height:74px;resize:vertical}
+  .reject-area .hint{font-size:11.5px;color:var(--dim);margin-top:5px}
+
+  /* ---------- タイムライン ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
+  .kpi{padding:15px 17px}
+  .kpi .k-l{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .kpi .k-v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin:4px 0 2px}
+  .kpi .k-d{font-size:11.5px;color:var(--good);font-family:var(--mono)}
+  .jr-wrap{display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start}
+  @media(max-width:980px){.jr-wrap{grid-template-columns:1fr}}
+  .jfeed{padding:16px 22px 20px}
+  .f-date{font-size:11.5px;letter-spacing:.12em;color:var(--dim);font-weight:600;margin:18px 0 10px;text-transform:uppercase}
+  .jfeed .f-date:first-child{margin-top:0}
+  .f-row{display:flex;gap:12px;align-items:baseline;font-size:13px;color:var(--muted);padding:7px 0;border-bottom:1px solid var(--line-soft)}
+  .f-row:last-child{border-bottom:none}
+  .f-row .f-time{font-family:var(--mono);font-size:11.5px;color:var(--dim);flex:none;width:66px}
+  .f-row .mk{flex:none;width:14px;text-align:center;font-family:var(--mono)}
+  .f-row.ok .mk{color:var(--good)}
+  .f-row.warn .mk{color:var(--warn)}
+  .f-row.run .mk{color:var(--cyan);animation:blink 1.4s ease-in-out infinite}
+  .f-row.dimr{color:var(--dim)}
+  .f-row .fprog{flex:1 1 90px;height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;align-self:center;min-width:70px;max-width:160px}
+  .f-row .fprog i{display:block;height:100%;width:62%;background:linear-gradient(90deg,var(--cyan),var(--accent))}
+  .f-card{display:flex;gap:14px;border:1px solid rgba(139,92,246,.5);background:linear-gradient(120deg,rgba(139,92,246,.09),rgba(139,92,246,.02));border-radius:12px;padding:14px 16px;margin:10px 0}
+  .f-card .f-time{font-family:var(--mono);font-size:11.5px;color:var(--dim);flex:none;width:66px;padding-top:3px}
+  .f-card .f-t{font-size:13.5px;font-weight:650;margin-bottom:8px}
+  .f-card .f-meta{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .f-card .f-sub{font-size:11.5px;color:var(--dim);margin-top:9px}
+  .f-card .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .f-card.compact{align-items:center;padding:11px 16px}
+  .f-card.compact .f-t{margin:0;font-size:12.5px}
+  .mini-thumb{border-radius:6px;background:linear-gradient(135deg,var(--g1),var(--g2));flex:none}
+  .rail-box{border:1px solid var(--line-soft);border-radius:10px;padding:13px 15px;background:var(--panel);margin-bottom:12px}
+  .rail-box h4{margin:0 0 8px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .rail-box .r-ev{font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--line-soft)}
+  .rail-box .r-ev:last-child{border-bottom:none}
+  .rail-box .r-ev .tm{font-family:var(--mono);color:var(--dim);margin-right:7px;font-size:11px}
+
+  /* ---------- ジャンル ---------- */
+  .g-table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .g-table th{text-align:left;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:600;padding:7px 10px;border-bottom:1px solid var(--line)}
+  .g-table td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  .g-table tr:last-child td{border-bottom:none}
+  .alloc{display:flex;align-items:center;gap:8px}
+  .alloc .bar{width:64px;height:5px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
+  .alloc .bar i{display:block;height:100%;background:var(--accent)}
+  .ch-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1080px){.ch-grid{grid-template-columns:1fr}}
+  .ch-card{padding:18px}
+  .ch-card h3{margin:0 0 4px;font-size:14.5px;font-weight:650}
+  .ch-card .lead{font-size:12px;color:var(--dim);margin:0 0 14px}
+  .cand{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px}
+  .cand:last-child{border-bottom:none}
+  .cand b{font-weight:650}
+  .cand .conf{font-size:11px;color:var(--cyan);margin-left:7px}
+  .cand .why{font-size:11.5px;color:var(--dim)}
+  .hist{font-size:12px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line-soft)}
+  .hist:last-child{border-bottom:none}
+  .hist .tm{color:var(--dim);margin-right:8px;font-size:11px}
+
+  /* ---------- 分析 ---------- */
+  .an-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+  @media(max-width:1080px){.an-grid{grid-template-columns:1fr}}
+  .an-card{padding:18px}
+  .an-card h3{margin:0 0 14px;font-size:14px;font-weight:650}
+  .hbar{display:grid;grid-template-columns:120px 1fr 52px;gap:10px;align-items:center;margin-bottom:9px;font-size:12.5px}
+  .hbar .g-name{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hbar .track2{height:9px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+  .hbar .track2 i{display:block;height:100%;border-radius:99px}
+  .hbar .val{font-family:var(--mono);font-size:12px;text-align:right;color:var(--text)}
+  .top-video{display:flex;gap:11px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px}
+  .top-video:last-child{border-bottom:none}
+  .top-video .rank{font-family:var(--mono);color:var(--dim);width:16px;flex:none}
+  .top-video .v{margin-left:auto;font-family:var(--mono);color:var(--muted);flex:none}
+  .loop-card{margin-top:16px;padding:15px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .loop-step{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+  .loop-step .b{width:8px;height:8px;border-radius:50%;background:var(--good);flex:none}
+  .loop-step.next .b{background:var(--dim)}
+  .loop-arrow{color:var(--dim)}
+  .policy{margin:0;padding-left:18px}
+  .policy li{font-size:12.5px;color:var(--muted);margin-bottom:7px}
+  .policy li b{color:var(--text);font-weight:600}
+
+  /* ---------- プロンプト ---------- */
+  .pr-grid{display:grid;grid-template-columns:270px 1fr;gap:16px;align-items:start}
+  @media(max-width:980px){.pr-grid{grid-template-columns:1fr}}
+  .pr-item{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;color:var(--text);margin-bottom:9px}
+  .pr-item:hover{border-color:rgba(165,175,215,.3)}
+  .pr-item.sel{border-color:var(--accent);box-shadow:0 0 14px rgba(139,92,246,.15)}
+  .pr-item .pr-t{font-size:13px;font-weight:650}
+  .pr-item .pr-m{font-size:11px;color:var(--dim)}
+  .editor-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:12px}
+  .editor-head h3{margin:0;font-size:14.5px;font-weight:650}
+  .ver-pill{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-radius:99px;padding:3px 9px;color:var(--muted);background:none}
+  .ver-pill.on{border-color:rgba(61,214,140,.45);color:var(--good);background:rgba(61,214,140,.08)}
+  .code{background:#0C0F1A;border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:2;overflow-x:auto;white-space:pre-wrap;color:#C9CEE4}
+  .tok-var{background:rgba(56,200,232,.14);border:1px solid rgba(56,200,232,.4);color:var(--cyan);border-radius:5px;padding:1px 5px}
+  .tok-free{background:rgba(240,66,107,.1);border:1px solid rgba(240,66,107,.35);color:#F58BB4;border-radius:5px;padding:1px 5px}
+  .legend{display:flex;gap:16px;font-size:11.5px;color:var(--dim);margin:10px 0 14px;flex-wrap:wrap}
+  .ed-stats{display:flex;gap:18px;font-size:12px;color:var(--muted);border-top:1px solid var(--line-soft);padding-top:12px;flex-wrap:wrap}
+  .ed-stats b{color:var(--text);font-family:var(--mono)}
+  .ed-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+
+  /* ---------- 設定 ---------- */
+  .set-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1080px){.set-grid{grid-template-columns:1fr}}
+  .set-card{padding:18px}
+  .set-card h3{margin:0 0 12px;font-size:14px;font-weight:650}
+  .budget-bar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin:8px 0 4px}
+  .budget-bar i{display:block;height:100%;width:25%;background:linear-gradient(90deg,var(--good),var(--cyan))}
+  .vram-bar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin:8px 0 4px}
+  .vram-bar i{display:block;height:100%;width:76%;background:linear-gradient(90deg,var(--cyan),var(--accent))}
+  .lv-opt{display:flex;gap:13px;align-items:flex-start;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px;color:var(--text);margin-bottom:9px}
+  .lv-opt:hover{border-color:rgba(165,175,215,.3)}
+  .lv-opt.sel{border-color:var(--accent);background:linear-gradient(90deg,var(--accent-soft),var(--panel2) 65%)}
+  .lv-opt .lv-k{font-family:var(--mono);font-weight:700;font-size:14px;color:var(--accent-hi);flex:none;width:26px}
+  .lv-opt .lv-t{font-size:13px;font-weight:650}
+  .lv-opt .lv-d{font-size:12px;color:var(--muted)}
+  .lv-opt .radio{margin-left:auto;flex:none;width:15px;height:15px;border-radius:50%;border:2px solid var(--dim);margin-top:3px}
+  .lv-opt.sel .radio{border-color:var(--accent);background:radial-gradient(circle,var(--accent) 40%,transparent 46%)}
+
+  /* ---------- 制作ライン (ボード) ---------- */
+  .board-wrap{overflow-x:auto;padding-bottom:8px}
+  .board{display:flex;gap:12px;min-width:1330px}
+  .col{flex:1 1 0;min-width:208px;background:rgba(255,255,255,.018);border:1px solid var(--line-soft);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:10px}
+  .col.gate{border-color:rgba(139,92,246,.5);background:linear-gradient(180deg,rgba(139,92,246,.07),rgba(139,92,246,.02))}
+  .col-head{display:flex;align-items:center;gap:8px}
+  .col-head .name{font-size:13px;font-weight:650}
+  .col-head .count{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .col-tag{margin-left:auto;font-size:10px;letter-spacing:.08em;color:var(--dim);border:1px solid var(--line-soft);padding:2.5px 7px;border-radius:99px}
+  .col.gate .col-tag{color:var(--accent-hi);border-color:rgba(139,92,246,.5);background:var(--accent-soft)}
+  .col-sub{font-size:11px;color:var(--dim);margin:-4px 0 2px}
+  .col-empty{border:1px dashed var(--line-soft);border-radius:8px;padding:14px 10px;text-align:center;font-size:11.5px;color:var(--dim)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .card.attention{border-color:rgba(139,92,246,.55);box-shadow:0 0 18px rgba(139,92,246,.15)}
+  .thumb{position:relative;aspect-ratio:16/9;background:linear-gradient(135deg,var(--g1),var(--g2))}
+  .thumb .waves{position:absolute;inset:auto 0 0 0;height:34%;background:repeating-linear-gradient(90deg,rgba(255,255,255,.28) 0 3px,transparent 3px 9px);mask-image:linear-gradient(0deg,#000,transparent);-webkit-mask-image:linear-gradient(0deg,#000,transparent);opacity:.6}
+  .thumb .tt{position:absolute;left:9px;bottom:7px;font-size:13px;font-weight:700;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.55)}
+  .thumb .dur{position:absolute;right:8px;bottom:7px;font-family:var(--mono);font-size:10.5px;background:rgba(0,0,0,.55);color:#fff;padding:2px 6px;border-radius:5px}
+  .card-b{padding:10px 12px 12px;display:flex;flex-direction:column;gap:7px}
+  .card-b .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .card-b .id{font-size:10.5px;color:var(--dim)}
+  .prog{height:5px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
+  .prog i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--cyan),var(--accent))}
+  .prog.live i{animation:shimmer 2.2s ease-in-out infinite alternate}
+  @keyframes shimmer{from{opacity:.75}to{opacity:1}}
+  .stripe{border-left:3px solid var(--warn);background:rgba(245,184,77,.06);border-radius:6px;padding:7px 9px;font-size:11.5px;color:var(--muted)}
+  .stripe b{color:var(--warn);font-weight:600}
+  .retention{font-size:11.5px;color:var(--muted)}
+  .retention b{color:var(--good);font-family:var(--mono)}
+
+  /* ---------- 枠詳細: 工程ブロック ---------- */
+  .stages{display:flex;flex-direction:column;gap:12px;margin-top:6px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .stage.now{border-color:rgba(139,92,246,.55);box-shadow:0 0 18px rgba(139,92,246,.12)}
+  .stage.todo{opacity:.75}
+  .stage-h{display:flex;align-items:center;gap:10px;padding:11px 16px;flex-wrap:wrap}
+  .stage-b{padding:0 16px 13px}
+  .stage-h .smk{font-family:var(--mono);width:16px;text-align:center;flex:none}
+  .stage.done .smk{color:var(--good)}
+  .stage.now .smk{color:var(--accent-hi);animation:blink 1.4s ease-in-out infinite}
+  .stage-h .sname{font-size:13.5px;font-weight:650}
+  .stage.now .sname{color:var(--accent-hi)}
+  .stage-h .stime{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .stage-h .sacts{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .iorow{display:flex;gap:8px;font-size:12px;color:var(--muted);margin-top:5px;align-items:flex-start}
+  .iorow .lb{flex:none;font-size:9.5px;letter-spacing:.08em;border:1px solid var(--line);border-radius:4px;padding:1.5px 5px;color:var(--dim);margin-top:1.5px}
+  .iorow.in .lb{border-color:rgba(56,200,232,.4);color:var(--cyan)}
+  .iorow.out .lb{border-color:rgba(61,214,140,.4);color:var(--good)}
+  .trk{display:flex;gap:10px;font-size:12px;color:var(--muted);padding:4.5px 0;align-items:baseline;border-bottom:1px solid var(--line-soft)}
+  .trk:last-child{border-bottom:none}
+  .trk .t{font-family:var(--mono);color:var(--dim);flex:none;width:22px}
+  .trk .d{font-family:var(--mono);color:var(--dim);flex:none;margin-left:auto}
+  .trk .plink{font-size:11px;flex:none}
+  .pv-wrap{display:grid;grid-template-columns:minmax(280px,420px) 1fr;gap:18px;margin:10px 0 14px}
+  @media(max-width:900px){.pv-wrap{grid-template-columns:1fr}}
+
+  /* ---------- 制作タイムライン(枠詳細) ---------- */
+  .tl{display:flex;flex-direction:column;gap:14px}
+  .tl-ev{display:flex;gap:10px}
+  .tl-ev .tm{font-family:var(--mono);font-size:11px;color:var(--dim);width:52px;flex:none;padding-top:2px;text-align:right}
+  .tl-ev .bd{flex:1;min-width:0;border-left:2px solid var(--line);padding-left:12px}
+  .tl-ev.done .bd{border-left-color:rgba(61,214,140,.5)}
+  .tl-ev.now .bd{border-left-color:var(--accent)}
+  .tl-ev .ti{font-size:12.5px;font-weight:650}
+  .tl-ev.now .ti{color:var(--accent-hi)}
+  .tl-ev .io{font-size:11.5px;color:var(--muted);margin-top:4px;display:flex;gap:7px;align-items:flex-start}
+  .tl-ev .io .lb{flex:none;font-size:9.5px;letter-spacing:.08em;border:1px solid var(--line);border-radius:4px;padding:1.5px 5px;color:var(--dim);margin-top:1.5px}
+  .tl-ev .io.in .lb{border-color:rgba(56,200,232,.4);color:var(--cyan)}
+  .tl-ev .io.out .lb{border-color:rgba(61,214,140,.4);color:var(--good)}
+
+  /* ---------- 枠の状態バリアント (ADR-0045) ---------- */
+  .pslot.appr{border-left:3px dashed var(--good);background:linear-gradient(135deg,rgba(61,214,140,.07),var(--panel2))}
+  .pslot.appr .s-m{color:var(--good)}
+  .pslot.fail{border-color:rgba(240,66,107,.55);background:linear-gradient(135deg,rgba(240,66,107,.11),var(--panel2))}
+  .pslot.fail .s-m{color:var(--red)}
+  .pslot.blkd{border-color:rgba(245,184,77,.45);background:linear-gradient(135deg,rgba(245,184,77,.08),var(--panel2))}
+  .pslot.blkd .s-m{color:var(--warn)}
+  .pslot.rejp{border-color:rgba(240,66,107,.4);border-style:dashed}
+  .pslot.rejp .s-m{color:var(--red)}
+  .pslot.skipd{opacity:.5;border-style:dashed}
+  .pill.bad{background:var(--red-soft);border-color:rgba(240,66,107,.45);color:var(--red)}
+  .pill.prov{border-style:dashed;color:var(--dim)}
+  .legend-b b{color:var(--muted);font-weight:600}
+
+  /* ---------- 注意ボックス / 期限 ---------- */
+  .nbox{border-left:3px solid var(--warn);background:rgba(245,184,77,.06);border-radius:6px;padding:9px 12px;font-size:12px;color:var(--muted);margin-top:9px}
+  .nbox.red{border-left-color:var(--red);background:var(--red-soft)}
+  .nbox.pur{border-left-color:var(--accent);background:var(--accent-soft)}
+  .nbox b{color:var(--text);font-weight:600}
+  .deadline{font-family:var(--mono);font-size:11px;color:var(--warn)}
+
+  /* ---------- 却下後の処置 (ADR-0045 rejected_pending) ---------- */
+  .rejected-box,.approved-box{display:none;border-radius:var(--r);padding:14px 16px;margin-top:12px}
+  .rejected-box{border:1px solid rgba(240,66,107,.45);background:var(--red-soft)}
+  .approved-box{border:1px solid rgba(61,214,140,.4);background:rgba(61,214,140,.06)}
+  .rejected-box.open,.approved-box.open{display:block}
+  .rejected-box h4,.approved-box h4{margin:0 0 6px;font-size:13.5px;font-weight:650}
+  .rejected-box h4{color:var(--red)}
+  .approved-box h4{color:var(--good)}
+  .rejected-box p,.approved-box p{margin:0 0 11px;font-size:12.5px;color:var(--muted)}
+  .rejected-box .acts,.approved-box .acts{display:flex;gap:9px;flex-wrap:wrap}
+  .stage.rejected{border-color:rgba(240,66,107,.5);box-shadow:none}
+  .stage.rejected .smk,.stage.rejected .sname{color:var(--red);animation:none}
+  .stage.approvedst{border-color:rgba(61,214,140,.45);box-shadow:none}
+  .stage.approvedst .smk,.stage.approvedst .sname{color:var(--good);animation:none}
+
+  /* ---------- 自動運転レベル: 解錠条件 (ADR-0043) ---------- */
+  .lv-opt.locked{opacity:.62;cursor:not-allowed}
+  .lv-opt.locked:hover{border-color:var(--line)}
+  .lv-req{font-size:11.5px;color:var(--dim);margin-top:5px;display:flex;gap:6px;align-items:baseline}
+  .lv-req .lk{flex:none}
+  .lv-req b{font-family:var(--mono);color:var(--warn)}
+  .lv-opt .radio.lock{border-style:dashed}
+
+  /* ---------- システム状態 (ADR-0044) ---------- */
+  .sysline{display:flex;align-items:center;gap:9px;font-size:13px;padding:9px 0}
+  .sysline .sdot{width:9px;height:9px;border-radius:50%;background:var(--good);box-shadow:0 0 9px var(--good);flex:none}
+  .cmd{background:#0C0F1A;border:1px solid var(--line);border-radius:7px;padding:9px 12px;font-family:var(--mono);font-size:11.5px;color:#C9CEE4;margin-top:8px;line-height:1.9;overflow-x:auto;white-space:pre}
+  .cmd .c{color:var(--dim)}
+
+  /* ---------- 分析: 目的関数 ---------- */
+  .obj-card{padding:16px 18px;border:1px solid rgba(139,92,246,.35);background:linear-gradient(120deg,rgba(139,92,246,.08),transparent 70%);border-radius:var(--r);margin-bottom:16px}
+  .obj-card .ol{display:flex;gap:10px;align-items:baseline;font-size:13px;color:var(--muted);padding:4px 0;flex-wrap:wrap}
+  .obj-card .ol .tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;border-radius:99px;padding:2.5px 8px;flex:none;font-weight:650}
+  .obj-card .ol .tag.main{background:var(--accent);color:#fff}
+  .obj-card .ol .tag.guard{background:rgba(245,184,77,.15);border:1px solid rgba(245,184,77,.45);color:var(--warn)}
+  .obj-card b{color:var(--text)}
+  .hbar .track2{position:relative;overflow:visible}
+  .hb-limit{position:absolute;top:-3.5px;bottom:-3.5px;width:2px;background:rgba(245,184,77,.85);border-radius:2px}
+  .hbar .val.low{color:var(--warn)}
+  .voice{font-size:12.5px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line-soft);display:flex;gap:9px}
+  .voice:last-child{border-bottom:none}
+  .voice .sent{flex:none;font-family:var(--mono);font-size:11px;width:34px}
+  .voice .sent.pos{color:var(--good)}
+  .voice .sent.neu{color:var(--dim)}
+
+  /* ---------- toast ---------- */
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(10px);background:var(--panel2);border:1px solid var(--line);color:var(--text);font-size:13px;padding:10px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:70;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  @media(prefers-reduced-motion:reduce){
+    .st.run .mk,.f-row.run .mk,.prog.live i{animation:none}
+    .toast{transition:none}
+  }
+</style>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo"><b>YMG</b><span>channel ops</span></div>
+
+    <div class="nav-sec">運用</div>
+    <button class="nav-btn active" data-nav="schedule">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>
+      編成表 <span class="nav-badge" id="schedBadge">2</span>
+    </button>
+    <button class="nav-btn" data-nav="journal">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3.5h10M3 6.5h10M3 9.5h7M3 12.5h5"/></svg>
+      タイムライン
+    </button>
+    <div class="nav-sec">計画・分析</div>
+    <button class="nav-btn" data-nav="genres">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h5.5L14 9l-5.5 5.5L2 8z"/><circle cx="5.5" cy="5.5" r="1.2"/></svg>
+      ジャンル
+    </button>
+    <button class="nav-btn" data-nav="analytics">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13.5h12M4 10.5v3M7 7.5v6M10 5v8.5M13 2.5v11"/></svg>
+      分析
+    </button>
+    <div class="nav-sec">基盤</div>
+    <button class="nav-btn" data-nav="prompts">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5h7l3 3v8h-10z"/><path d="M10 2.5v3h3M5.5 8.5h5M5.5 11h3.5"/></svg>
+      プロンプト
+    </button>
+    <button class="nav-btn" data-nav="settings">
+      <svg class="nv-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>
+      設定
+    </button>
+
+    <div class="side-foot"><span>seita</span><button type="button">ログアウト</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="screenTitle">編成表</h1>
+        <div class="sub" id="screenSub">ホーム — 週の枠が起点。枠を開くと工程ごとの詳細へ</div>
+      </div>
+      <div class="top-right">
+        <div class="level-chip" title="自動運転レベル">
+          <b id="levelKey">L0</b><span id="levelName">監督モード</span>
+          <button type="button" data-goto="settings">変更</button>
+        </div>
+        <button class="status-chip" type="button" data-goto="settings" title="システム状態 — 停止は CLI / Slack から"><span class="dot"></span><span>稼働中</span></button>
+      </div>
+    </header>
+
+    <main class="content">
+
+
+      <!-- ═══════════════ 編成表 (ホーム / 一覧) ═══════════════ -->
+      <section class="screen active" id="screen-schedule">
+        <div class="attn-banner">
+          <span class="lv">要確認 2 件</span>
+          <span>完成済みで、あなたの公開判断を待っている枠:</span>
+          <button class="plink" type="button" data-goto="slotdetail">7/20 (月) 星降る夜の環境音 →</button>
+          <button class="plink" type="button" data-toast="モックでは 7/20 の枠のみ詳細を用意しています">7/21 (火) 黄昏シンセ波 →</button>
+        </div>
+
+        <div class="line-head">
+          <h2>週間編成</h2>
+          <button class="btn sm" type="button" data-toast="前の週へ(モック) — 過去週では公開済み・見送り・取り下げの枠を確認できます">◀</button>
+          <span class="mono" style="color:var(--dim);font-size:12.5px">7/18 (土) — 7/24 (金)</span>
+          <button class="btn sm" type="button" data-toast="次の週へ(モック) — 未着手の枠は前日 03:00 に自動で企画が始まります">▶</button>
+          <span style="margin-left:auto"></span>
+          <button class="btn sm" type="button" data-goto="genres">ジャンル配分 →</button>
+          <button class="btn sm primary" type="button" data-toast="臨時の枠を追加します(モック): 日付・時刻・ジャンルを指定 → その枠だけの制作ラインが走る。パターンは変更しません">＋ この週に枠を追加</button>
+        </div>
+
+        <div class="panel" style="overflow:hidden;margin-bottom:16px">
+          <div class="sch-outer">
+            <div class="pg">
+              <div class="pg-day">
+                <div class="pg-h">土 18</div>
+                <button class="pslot pub" type="button" data-goto="slotdone">
+                  <span class="s-t">07:00</span>土曜のピアノ<span class="s-m">公開済み · 維持率 33.8%</span>
+                </button>
+              </div>
+              <div class="pg-day today">
+                <div class="pg-h">日 19 (今日)</div>
+                <button class="pslot pub" type="button" data-goto="slotdone">
+                  <span class="s-t">07:00</span>真夜中ドライブ<span class="s-m">公開済み · 42.1% (暫定)</span>
+                </button>
+                <button class="pslot planl pexp" type="button" data-toast="企画済み枠(モック外): 企画内容の確認・編集ができます。20:00 に音楽生成が始まります">
+                  <span class="s-t">20:00</span>夜更けのガラージュ<span class="s-m">実験 · 20:00 生成開始</span>
+                </button>
+              </div>
+              <div class="pg-day">
+                <div class="pg-h">月 20</div>
+                <button class="pslot gate sel" type="button" data-goto="slotdetail">
+                  <span class="s-t">07:00</span>星降る夜の環境音<span class="s-m">要確認 — 完成済み</span>
+                </button>
+              </div>
+              <div class="pg-day">
+                <div class="pg-h">火 21</div>
+                <button class="pslot gate" type="button" data-toast="モックでは 7/20 の枠のみ詳細を用意しています">
+                  <span class="s-t">07:00</span>黄昏シンセ波<span class="s-m">要確認 — 完成済み</span>
+                </button>
+                <button class="pslot appr" type="button" data-toast="承認済みの枠(モック): 12:00 に自動で公開されます。公開前ならここから承認を取り消せます">
+                  <span class="s-t">12:00</span>昼下がりのチルホップ<span class="s-m">承認済み · 12:00 に公開</span>
+                </button>
+              </div>
+              <div class="pg-day">
+                <div class="pg-h">水 22</div>
+                <button class="pslot gen" type="button" data-toast="制作中の枠(モック外): 工程の進捗がリアルタイムで見えます">
+                  <span class="s-t">07:00</span>朝のチルホップ<span class="s-m">音楽生成中 4/6</span><span class="sprog"><i></i></span>
+                </button>
+                <button class="pslot fail" type="button" data-toast="失敗した枠(モック): GPU が 3 回連続で応答しませんでした。枠詳細から音楽生成をやり直すか、この枠を見送るかを選べます">
+                  <span class="s-t">19:00</span>夜霧のシンセ<span class="s-m">失敗 — 要対応</span>
+                </button>
+              </div>
+              <div class="pg-day">
+                <div class="pg-h">木 23</div>
+                <button class="pslot gen" type="button" data-toast="制作中の枠(モック外): 指紋が一致したトラックを自動で作り直しています (2/3 回目)。対応は不要です">
+                  <span class="s-t">07:00</span>静寂のピアノ<span class="s-m">検査中 — 自動再生成</span>
+                </button>
+              </div>
+              <div class="pg-day">
+                <div class="pg-h">金 24</div>
+                <button class="pslot emp" type="button" data-toast="未着手の枠(モック): 前日 03:00 に自動で企画が始まります。今すぐ始めることもできます">07:00<br>おまかせ (AI)<br>前日 03:00 に自動企画</button>
+              </div>
+            </div>
+          </div>
+          <div class="legend-b">
+            <b>枠の状態:</b>
+            <span><span class="sw" style="border:1px dashed var(--line);background:none"></span>未着手</span>
+            <span><span class="sw" style="border:1px solid var(--line);background:none"></span>企画済み</span>
+            <span><span class="sw" style="background:repeating-linear-gradient(45deg,#161A2C 0 3px,rgba(56,200,232,.35) 3px 6px)"></span>制作中</span>
+            <span><span class="sw" style="background:rgba(139,92,246,.5)"></span>要確認 (人の判断)</span>
+            <span><span class="sw" style="background:rgba(61,214,140,.22);border-left:3px dashed var(--good)"></span>承認済み (公開予約)</span>
+            <span><span class="sw" style="background:rgba(61,214,140,.4)"></span>公開済み</span>
+            <span><span class="sw" style="background:rgba(240,66,107,.35)"></span>失敗 / 却下済み</span>
+            <span><span class="sw" style="background:rgba(245,184,77,.3)"></span>待機 (ジャンル停止・システム停止)</span>
+            <span style="opacity:.55"><span class="sw" style="border:1px dashed var(--line);background:none"></span>見送り・取り下げ</span>
+          </div>
+        </div>
+
+        <div class="panel ch-card">
+          <h3>公開枠の設定</h3>
+          <p class="lead">枠 = 曜日 × 時刻 × ジャンル指定。ここで編集した内容が、上のカレンダーの(制作が始まっていない)将来枠に反映される</p>
+          <div id="patRows"></div>
+          <div class="ed-actions" style="margin-top:12px">
+            <button class="btn sm" type="button" id="addSlotRow">＋ 枠を追加</button>
+            <button class="btn sm primary" type="button" data-toast="既定パターン v2 として保存しました — 制作が始まっていない将来枠から反映されます(モック)">保存</button>
+          </div>
+          <div class="lv-note" style="margin-top:10px">
+            <b style="color:var(--text)">おまかせ (AI)</b> = ジャンル配分と直近実績からシステムが選ぶ(主力・拡張のみ)。<b style="color:var(--text)">実験ジャンルはおまかせでは選ばれない</b> — 実験を出したい枠には Future Garage のように明示的に指定する。この日だけ休む・変える等の単発操作は上のカレンダーの枠から。
+          </div>
+          <div class="nbox" style="margin-top:12px">
+            現在の設定は <b>週 9 本(1 日あたり最大 2 本)</b>。1 日に公開できるのは YouTube API の割当上およそ <b>6 本</b>までで、これを超える構成は保存時に警告します。GPU は 1 本ずつ順に処理し、<b>公開予定時刻の早い枠から</b>実行します。
+          </div>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の位置づけ</span>
+          <b>ホームであり一覧。枠がこのシステムの中心要素</b>で、各枠が自分の制作ライン(企画→生成→検査→パッケージ→公開)を持つ。枠の色 = その枠の状態。<b>人の判断が要る枠だけが紫に光り</b>、失敗した枠は赤で止まる。枠をクリックすると<b>枠詳細</b>へブレイクダウン(公開済みの枠は実績と取り下げが見える別の姿になる)。旧「制作ライン」「受信箱」「公開キュー」画面はこの構成に吸収された。生成を増やしたいときは枠を追加する(枠の数だけラインが走る)。
+        </div>
+      </section>
+
+      <!-- ═══════════════ 枠詳細 (工程ごとの詳細) ═══════════════ -->
+      <section class="screen" id="screen-slotdetail">
+        <button class="plink" type="button" data-goto="schedule" style="font-size:12.5px">← 編成表へ戻る</button>
+        <div class="sd-head">
+          <h2>星降る夜の環境音</h2>
+          <span class="pill genre" style="background:#7BD8E8">Ambient</span>
+          <span class="pill gatep" id="slotStatePill">公開待ち — 要確認</span>
+          <span class="mono" style="color:var(--dim);font-size:12px">公開枠 7/20 (月) 07:00 JST · slot_0198a2…44e1</span>
+        </div>
+
+        <div class="stages">
+
+          <div class="stage done">
+            <div class="stage-h">
+              <span class="smk">✓</span><span class="sname">企画</span><span class="stime">7/19 03:05 · 12 秒</span>
+              <span class="sacts">
+                <button class="btn sm" type="button" data-goto="prompts">planner v3 を見る</button>
+                <button class="btn sm" type="button" data-toast="planner プロンプトを修正して、この枠だけ企画からやり直します。音源・サムネ・文言・動画はすべて作り直しになります(モック)">プロンプトを修正してやり直す</button>
+                <button class="btn sm ghost-red" type="button" data-toast="企画からやり直します。音源・サムネ・文言・動画はすべて作り直しになります(モック)">この工程からやり直す</button>
+              </span>
+            </div>
+            <div class="stage-b">
+              <div class="iorow in"><span class="lb">使った</span><span>planner v3 · 直近 14 日の実績スナップショット · 枠指定「おまかせ」→ Ambient を選択</span></div>
+              <div class="iorow out"><span class="lb">できた</span><span>テーマ「星降る夜の環境音」· サブテーマ 6 件 · BPM 68 / A minor · mood: 静謐 <button class="plink" type="button" data-toast="企画 JSON の全文表示(モック外): theme / subthemes / mood / visual_direction">全文 →</button></span></div>
+              <div class="nbox pur" style="margin-top:8px">
+                <b>Ambient を選んだ理由</b> — 直近 4 本の平均総視聴時間が候補中で最も高く(28.4 時間 / 本)、視聴維持率 40.6% も下限 34.2% を上回っているため。<button class="plink" type="button" data-goto="analytics">判断基準を見る →</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="stage done">
+            <div class="stage-h">
+              <span class="smk">✓</span><span class="sname">音楽生成</span><span class="stime">04:02 – 04:43 · GPU 41 分</span>
+              <span class="sacts">
+                <button class="btn sm ghost-red" type="button" data-toast="6 トラックすべてを作り直します。検査・チャプター・動画も作り直しになります。企画・サムネ・タイトル・説明文はそのまま残ります(モック)">この工程からやり直す</button>
+              </span>
+            </div>
+            <div class="stage-b">
+              <div class="iorow in"><span class="lb">使った</span><span>ACE-Step 1.5 · 企画のサブテーマ 6 件 · BPM 68 / A minor 固定</span></div>
+              <div class="iorow out" style="margin-bottom:7px"><span class="lb">できた</span><span>トラック 6 本 / 28 分 41 秒 — 気に入らないトラックだけ個別にやり直せる</span></div>
+              <div class="trk"><span class="t">01</span><span>Starlit Drift / 星のまどろみ</span><span class="d">5:02</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 01 だけ再生成します — 他の 5 本はそのまま(モック)">このトラックだけ再生成</button></div>
+              <div class="trk"><span class="t">02</span><span>Nebula Calm / 静かな星雲</span><span class="d">4:48</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 02 だけ再生成します — 他の 5 本はそのまま(モック)">このトラックだけ再生成</button></div>
+              <div class="trk"><span class="t">03</span><span>Deep Field / 深い夜空</span><span class="d">4:55</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 03 だけ再生成します — 他の 5 本はそのまま(モック)">このトラックだけ再生成</button></div>
+              <div class="trk"><span class="t">04</span><span>Aurora Veil / 光のカーテン</span><span class="d">4:41</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 04 だけ再生成します — 他の 5 本はそのまま(モック)">このトラックだけ再生成</button></div>
+              <div class="trk"><span class="t">05</span><span>Quiet Orbit / 静かな軌道</span><span class="d">4:37</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 05 だけ再生成します — 他の 5 本はそのまま(モック)">このトラックだけ再生成</button></div>
+              <div class="trk"><span class="t">06</span><span>Dawn Horizon / 夜明けの地平</span><span class="d">4:38</span><button class="plink" type="button" data-toast="再生(モック)">▶ 再生</button><button class="plink" type="button" data-toast="トラック 06 だけ作り直します。他の 5 本はそのまま。差し替えた音源は必ず検査からやり直します(モック)">このトラックだけ再生成</button></div>
+              <div class="nbox" style="margin-top:10px">
+                トラックを 1 本でも差し替えると、<b>検査・チャプター・動画の合成は必ずやり直し</b>になります(検査していない音源が公開されることはありません)。サムネ・タイトル・説明文はそのまま残ります。
+              </div>
+            </div>
+          </div>
+
+          <div class="stage done">
+            <div class="stage-h">
+              <span class="smk">✓</span><span class="sname">検査</span><span class="stime">04:45 · 2 分</span>
+              <span class="sacts">
+                <button class="btn sm" type="button" data-toast="検査だけやり直します。音源・動画・文言はそのまま残ります(モック)">再検査</button>
+              </span>
+            </div>
+            <div class="stage-b">
+              <div class="iorow in"><span class="lb">使った</span><span>AcoustID + Chromaprint(既存曲との指紋照合)· 音量計測</span></div>
+              <div class="iorow out"><span class="lb">できた</span><span>指紋 6/6 CLEAR · -14 LUFS · AI 開示フラグ (containsSyntheticMedia = true) 設定済み</span></div>
+            </div>
+          </div>
+
+          <div class="stage done">
+            <div class="stage-h">
+              <span class="smk">✓</span><span class="sname">パッケージング</span><span class="stime">04:50 – 05:12</span>
+              <span class="sacts">
+                <button class="btn sm" type="button" data-goto="prompts">title / description プロンプトを見る</button>
+                <button class="btn sm" type="button" data-toast="タイトルと説明文だけ作り直します。動画・サムネ・音源はそのまま残ります(モック)">文言だけやり直す</button>
+                <button class="btn sm ghost-red" type="button" data-toast="サムネ・タイトル・説明文と動画の合成を作り直します。音源と検査結果はそのまま残ります(モック)">この工程からやり直す</button>
+              </span>
+            </div>
+            <div class="stage-b">
+              <div class="iorow in"><span class="lb">使った</span><span>Juggernaut XL v10(サムネ背景)· finisher v2 / title v1 / description v1 · ffmpeg(動画合成)</span></div>
+              <div class="iorow out"><span class="lb">できた</span><span>サムネ · 動画 1080p / 30 分 · タイトル · 説明文 · チャプター(下のプレビュー)</span></div>
+            </div>
+          </div>
+
+          <div class="stage now" id="gateStage">
+            <div class="stage-h">
+              <span class="smk">●</span><span class="sname" id="gateName">公開待ち — あなたの承認待ち</span><span class="stime">08:00 完成</span>
+              <span class="deadline" id="gateDeadline">承認期限 7/27 (月) 07:00 · あと 7 日</span>
+            </div>
+            <div class="stage-b">
+              <div class="pv-wrap">
+                <div class="player">
+                  <div class="waves"></div>
+                  <span class="play-ic"><svg width="20" height="20" viewBox="0 0 20 20" fill="#fff"><path d="M4 2.5l13 7.5-13 7.5z"/></svg></span>
+                </div>
+                <div>
+                  <h2 class="pv-title">【Ambient】星降る夜の環境音 — Deep Focus Mix (30 min)</h2>
+                  <p class="pv-desc">作業・睡眠・読書のためのアンビエントミックス。30 分ノンストップ。<br>
+                    <span class="mono" style="font-size:11px;color:var(--dim)">♪ この動画の音楽は AI によって生成されています / This music was generated by AI.</span></p>
+                  <div class="pv-cols">
+                    <div class="pv-box">
+                      <h4>チャプター (英 / 日併記)</h4>
+                      <div class="chap"><span class="t">00:00</span><span>Starlit Drift / 星のまどろみ</span></div>
+                      <div class="chap"><span class="t">05:00</span><span>Nebula Calm / 静かな星雲</span></div>
+                      <div class="chap"><span class="t">10:00</span><span>Deep Field / 深い夜空</span></div>
+                      <div class="chap"><span class="t">15:00</span><span>Aurora Veil / 光のカーテン</span></div>
+                      <div class="chap"><span class="t">20:00</span><span>Quiet Orbit / 静かな軌道</span></div>
+                      <div class="chap"><span class="t">25:00</span><span>Dawn Horizon / 夜明けの地平</span></div>
+                    </div>
+                    <div class="pv-box">
+                      <h4>検査サマリ</h4>
+                      <div class="chk"><span class="mk">✓</span>AI 生成の開示 (containsSyntheticMedia)</div>
+                      <div class="chk"><span class="mk">✓</span>指紋チェック 6/6 CLEAR</div>
+                      <div class="chk"><span class="mk">✓</span>音量正規化 (-14 LUFS)</div>
+                      <div class="chk"><span class="mk">✓</span>タイトル・説明文の形式検証</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="gate-actions" id="gateActions">
+                <button class="btn primary" type="button" id="approveBtn">✓ 承認して公開</button>
+                <button class="btn ghost-red" type="button" id="rejectToggle">却下</button>
+                <span class="mono" style="margin-left:auto;color:var(--dim);font-size:11px">承認するまで公開されません</span>
+                <div class="nbox" style="flex-basis:100%">
+                  <b>7/27 (月) 07:00 までに承認</b>してください。過ぎると自動的に見送りになります。公開予定の 7/20 07:00 を過ぎてから承認した場合は、<b>承認した時点で公開</b>されます。
+                </div>
+                <div class="reject-area" id="rejectArea">
+                  <textarea placeholder="却下理由 (例: 低音が単調で 10 分以降の展開が弱い)"></textarea>
+                  <div class="hint">却下理由は次回の企画 LLM への入力になります。却下すると枠は「却下済み(処置待ち)」になり、任意の工程からやり直すか、見送るかを選べます。</div>
+                  <div style="margin-top:8px"><button class="btn sm ghost-red" type="button" id="rejectConfirm">却下を確定</button></div>
+                </div>
+              </div>
+
+              <div class="approved-box" id="approvedBox">
+                <h4>承認済み — 7/20 (月) 07:00 に公開されます</h4>
+                <p>公開までは、この枠をやり直すことも承認を取り消すこともできます。やり直した場合は承認が失効し、あらためて承認が必要になります。</p>
+                <div class="acts">
+                  <button class="btn sm" type="button" id="unapproveBtn">承認を取り消す</button>
+                  <button class="btn sm" type="button" data-toast="公開を待たずに今すぐ公開します(モック)">今すぐ公開する</button>
+                </div>
+              </div>
+
+              <div class="rejected-box" id="rejectedBox">
+                <h4>却下済み — 処置待ち</h4>
+                <p>この枠をどうするか選んでください。何もしなければ 7/27 (月) 07:00 に自動で見送りになります。却下理由は次回の企画に反映されます。</p>
+                <div class="acts">
+                  <button class="btn sm" type="button" data-toast="企画からやり直します。音源・サムネ・文言・動画はすべて作り直しになります(モック)">企画からやり直す</button>
+                  <button class="btn sm" type="button" data-toast="音楽生成からやり直します。検査・チャプター・動画も作り直しになります(モック)">音楽生成からやり直す</button>
+                  <button class="btn sm" type="button" data-toast="タイトルと説明文だけ作り直します(モック)">文言だけやり直す</button>
+                  <button class="btn sm ghost-red" type="button" data-toast="この枠を見送りにしました。成果物は 30 日間保持され、単発枠を追加すれば再利用できます(モック)">この枠は見送る</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stage todo">
+            <div class="stage-h">
+              <span class="smk">·</span><span class="sname" style="color:var(--dim)">公開</span><span class="stime">7/20 (月) 07:00 JST 予定</span>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="panel sd-card" style="margin-top:14px">
+          <h3>やり直しの履歴</h3>
+          <div class="hist"><span class="tm mono">7/19 06:20</span>トラック 03 を作り直しました(理由: 中盤の展開が単調)→ 検査・チャプター・動画も再作成</div>
+          <div class="hist"><span class="tm mono">7/19 04:58</span>タイトルを作り直しました(title v1 のまま再実行)</div>
+          <div class="nbox" style="margin-top:10px">
+            作り直す前の成果物は <b>7 日間</b>(7/26 まで)保持されます。それを過ぎると復元できません。<button class="plink" type="button" data-toast="旧世代の成果物一覧(モック外): 世代・作成日時・戻すボタン">保持中の旧世代を見る →</button>
+          </div>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の位置づけ</span>
+          <b>枠 1 つの工程詳細。</b>この枠の制作が「どの工程を・何を使って・どう実施されたか」を上から順に読める。各工程に<b>「この工程からやり直す」</b>があり、企画とパッケージングは<b>プロンプトを修正してからのやり直し</b>、音楽生成は<b>トラック単体の再生成</b>にも対応する。<b>何が作り直しになるかは工程の順番ではなく成果物の依存関係で決まる</b> — トラックを 1 本差し替えれば検査と動画は必ず作り直しになり、文言だけのやり直しでは動画もサムネも残る。承認済みの枠でやり直した場合は承認が失効し、あらためて公開ゲートを通る。承認は「公開待ち」工程の中にある。
+        </div>
+      </section>
+
+      <!-- ═══════════════ 公開済み枠の詳細 ═══════════════ -->
+      <section class="screen" id="screen-slotdone">
+        <button class="plink" type="button" data-goto="schedule" style="font-size:12.5px">← 編成表へ戻る</button>
+        <div class="sd-head">
+          <h2>真夜中ドライブ</h2>
+          <span class="pill genre" style="background:#F58BC0">Synthwave</span>
+          <span class="pill ok">公開済み</span>
+          <span class="mono" style="color:var(--dim);font-size:12px">公開枠 7/19 (日) 07:00 JST · 承認: seita (7/18 21:40)</span>
+        </div>
+
+        <div class="kpis">
+          <div class="panel kpi">
+            <div class="k-l">再生回数</div>
+            <div class="k-v">312</div>
+            <div class="k-d"><span class="pill prov">暫定</span></div>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">視聴維持率</div>
+            <div class="k-v">42.1%</div>
+            <div class="k-d"><span class="pill prov">暫定</span></div>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">総視聴時間</div>
+            <div class="k-v">18.9 h</div>
+            <div class="k-d"><span class="pill prov">暫定</span></div>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">確定するまで</div>
+            <div class="k-v mono" style="font-size:20px">7/26</div>
+            <div class="k-d" style="color:var(--dim)">公開 7 日後に確定値へ</div>
+          </div>
+        </div>
+
+        <div class="nbox" style="margin-bottom:16px">
+          公開直後の数値は YouTube 側で変動します。<b>ジャンル選択や配分の自動判断に使うのは、公開から 7 日を過ぎた確定値だけ</b>です。
+        </div>
+
+        <div class="sd-grid">
+          <div>
+            <div class="panel sd-card">
+              <h3>公開の記録</h3>
+              <div class="kv"><span class="k">公開日時</span><span class="v mono">7/19 07:00 JST</span></div>
+              <div class="kv"><span class="k">承認</span><span class="v">seita が承認(L0)</span></div>
+              <div class="kv"><span class="k">AI 開示</span><span class="v"><span class="pill ok">設定済み</span></span></div>
+              <div class="kv"><span class="k">指紋チェック</span><span class="v">6/6 CLEAR</span></div>
+              <div class="kv"><span class="k">YouTube</span><span class="v"><button class="plink" type="button" data-toast="YouTube で開く(モック)">動画を開く →</button></span></div>
+            </div>
+
+            <div class="panel sd-card">
+              <h3>成果物の保持</h3>
+              <div class="kv"><span class="k">音源・サムネ・企画</span><span class="v" style="color:var(--good)">永続保持</span></div>
+              <div class="kv"><span class="k">動画ファイル (mp4)</span><span class="v mono">10/17 に削除</span></div>
+              <div class="lv-note" style="margin-top:9px">公開後は YouTube 側が動画の正本になるため、ローカルの動画ファイルは 90 日で削除します。音源とサムネは残るので、必要になれば再合成できます。</div>
+            </div>
+
+            <div class="panel sd-card">
+              <h3>取り下げ</h3>
+              <p class="lead" style="margin-bottom:10px">問題が見つかったときは、動画を非公開(private)にします。削除はしません — 統計が失われ、元に戻せないためです。</p>
+              <button class="btn ghost-red" type="button" data-toast="この動画を非公開にしました。枠は「取り下げ済み」になります。作り直す場合は単発枠を追加してください(モック)">取り下げる(非公開にする)</button>
+              <div class="lv-note" style="margin-top:9px">Slack の公開通知からも取り下げられます。自動運転 L1 では公開通知に取り下げボタンが付きます。</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="panel sd-card">
+              <h3>視聴者の声 <span class="pill" style="margin-left:6px">読み取りのみ</span></h3>
+              <p class="lead" style="margin-bottom:8px">コメント 14 件 · 好意的 11 / 中立 3 · 企画 LLM への参考情報として渡されます</p>
+              <div class="voice"><span class="sent pos mono">好意</span><span>「イントロのシンセが最高。作業用に最適」</span></div>
+              <div class="voice"><span class="sent pos mono">好意</span><span>「夜のドライブで聴いてます。もっと長いバージョンが欲しい」</span></div>
+              <div class="voice"><span class="sent neu mono">中立</span><span>「4 曲目だけテンポが違う気がする」</span></div>
+              <div class="lv-note" style="margin-top:9px">このシステムからは返信・削除はできません。対応が必要なときは YouTube Studio で操作してください。</div>
+            </div>
+
+            <div class="panel sd-card">
+              <h3>制作の記録</h3>
+              <div class="stages" style="margin-top:0">
+                <div class="stage done">
+                  <div class="stage-h"><span class="smk">✓</span><span class="sname">企画</span><span class="stime">7/18 03:04</span></div>
+                  <div class="stage-b"><div class="iorow out"><span class="lb">できた</span><span>テーマ「真夜中ドライブ」· BPM 104 / F minor · planner v3</span></div></div>
+                </div>
+                <div class="stage done">
+                  <div class="stage-h"><span class="smk">✓</span><span class="sname">音楽生成</span><span class="stime">03:20 – 04:06 · GPU 46 分</span></div>
+                  <div class="stage-b"><div class="iorow out"><span class="lb">できた</span><span>トラック 6 本 / 29 分 12 秒 · ACE-Step 1.5</span></div></div>
+                </div>
+                <div class="stage done">
+                  <div class="stage-h"><span class="smk">✓</span><span class="sname">検査</span><span class="stime">04:08</span></div>
+                  <div class="stage-b"><div class="iorow out"><span class="lb">できた</span><span>指紋 6/6 CLEAR · -14 LUFS · AI 開示フラグ設定済み</span></div></div>
+                </div>
+                <div class="stage done">
+                  <div class="stage-h"><span class="smk">✓</span><span class="sname">パッケージング</span><span class="stime">04:12 – 04:35</span></div>
+                  <div class="stage-b"><div class="iorow out"><span class="lb">できた</span><span>サムネ · 動画 1080p / 30 分 · タイトル · 説明文 · チャプター</span></div></div>
+                </div>
+                <div class="stage done">
+                  <div class="stage-h"><span class="smk">✓</span><span class="sname">公開</span><span class="stime">7/19 07:00</span></div>
+                  <div class="stage-b"><div class="iorow in"><span class="lb">使った</span><span>seita の承認(7/18 21:40)· YouTube Data API</span></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の位置づけ</span>
+          <b>公開済みの枠を開いたときの姿。</b>制作中の枠詳細と同じ構造(工程が上から読める)を保ちつつ、公開後に必要になるもの — <b>実績・視聴者の声・取り下げ・成果物の保持状況</b> — を足している。実績値には<b>「暫定」</b>を明示し、自動判断が使う確定値と区別する。取り下げは非公開化であって削除ではない。
+        </div>
+      </section>
+
+      <!-- ═══════════════ タイムライン (ログ) ═══════════════ -->
+      <section class="screen" id="screen-journal">
+        <div class="kpis">
+          <div class="panel kpi">
+            <div class="k-l">要確認の枠</div>
+            <div class="k-v" style="color:var(--accent-hi)">2 件</div>
+            <button class="plink" type="button" data-goto="schedule">編成表で確認 →</button>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">制作中の枠</div>
+            <div class="k-v">2 本</div>
+            <div class="k-d" style="color:var(--cyan)">生成 1 (4/6) · 検査 1 (自動再生成)</div>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">今日の公開</div>
+            <div class="k-v">1 / 6 本</div>
+            <div class="k-d" style="color:var(--muted)">維持率 42.1% <span class="pill prov">暫定</span></div>
+          </div>
+          <div class="panel kpi">
+            <div class="k-l">自動運転</div>
+            <div class="k-v mono" style="font-size:22px">L0 <span style="font-size:13px;font-family:var(--sans);font-weight:600;color:var(--muted)">監督モード</span></div>
+            <button class="plink" type="button" data-goto="settings">レベルを変更 →</button>
+          </div>
+        </div>
+
+        <div class="jr-wrap">
+          <div class="panel jfeed">
+            <div class="f-date">7月19日 (日)</div>
+            <article class="f-card">
+              <span class="f-time">08:00</span>
+              <div style="min-width:0">
+                <div class="f-t">7/20 (月) の枠「星降る夜の環境音」が完成しました — 公開待ちです</div>
+                <div class="f-meta">
+                  <span class="mini-thumb" style="--g1:#38C8E8;--g2:#1A1440;width:96px;aspect-ratio:16/9"></span>
+                  <span>
+                    <span class="pill">Ambient</span> <span class="pill ok">検査 all clear</span><br>
+                    <span style="font-size:11.5px;color:var(--dim)">30:00 · 公開枠 7/20 (月) 07:00 JST</span>
+                  </span>
+                </div>
+                <div class="acts">
+                  <button class="btn sm primary" type="button" id="jrApprove">✓ 承認して公開</button>
+                  <button class="btn sm ghost-red" type="button" data-toast="却下(モック): 理由を入力すると次回の企画 LLM に反映されます">却下</button>
+                  <button class="btn sm" type="button" data-goto="slotdetail">枠を開いて詳しく見る</button>
+                </div>
+                <div class="f-sub">承認するまで公開されません。7/27 (月) 07:00 を過ぎると自動で見送りになります。じっくり見たいときだけ枠詳細へ。</div>
+              </div>
+            </article>
+            <div class="f-row run"><span class="f-time">09:30</span><span class="mk">●</span><span>臨時の枠が追加され、制作を開始しました — Lo-Fi Hip Hop「雨宿りのビート」</span></div>
+            <div class="f-row warn"><span class="f-time">08:44</span><span class="mk">✕</span><span>7/22 (水) 19:00 枠「夜霧のシンセ」の音楽生成が 3 回続けて失敗しました(GPU 応答なし)。<b style="color:var(--warn)">この枠は止まっています</b> — やり直すか見送るかを選んでください</span></div>
+            <div class="f-row ok"><span class="f-time">07:30</span><span class="mk">✓</span><span>今日のサマリを Slack に送信しました — 公開 1 件 / 要確認 2 件 / 制作中 2 件 · システムは稼働中</span></div>
+            <div class="f-row ok"><span class="f-time">07:00</span><span class="mk">✓</span><span>「真夜中ドライブ」を公開しました — 視聴維持率 <b class="mono" style="color:var(--good)">42.1%</b> <span class="pill prov">暫定</span></span></div>
+            <div class="f-row warn"><span class="f-time">06:41</span><span class="mk">!</span><span>7/23 (木) 枠「静寂のピアノ」トラック 3 が既存曲と一致 → 自動で作り直しています (2/3 回目)。対応は不要です</span></div>
+            <div class="f-row run"><span class="f-time">06:00</span><span class="mk">●</span><span>7/22 (水) 枠「朝のチルホップ」音楽生成中 — トラック 4/6</span><span class="fprog"><i></i></span></div>
+            <div class="f-row"><span class="f-time">05:12</span><span class="mk" style="color:var(--good)">✓</span><span>「星降る夜の環境音」パッケージング完了 (サムネ・動画・タイトル)</span></div>
+            <div class="f-row dimr"><span class="f-time">03:05</span><span class="mk">✓</span><span>今日 20:00 の実験枠を企画しました — Future Garage「夜更けのガラージュ」</span></div>
+            <div class="f-row dimr"><span class="f-time">03:00</span><span class="mk">✓</span><span>翌日分の枠を作成し、DB バックアップを実行しました</span></div>
+
+            <div class="f-date">7月18日 (土)</div>
+            <article class="f-card compact">
+              <span class="f-time">21:04</span>
+              <div class="f-t" style="flex:1">7/21 (火) の枠「黄昏シンセ波」が完成 — 公開待ちです</div>
+              <button class="btn sm" type="button" data-toast="モックでは 7/20 の枠のみ詳細を用意しています">枠を開く</button>
+            </article>
+            <div class="f-row ok"><span class="f-time">07:00</span><span class="mk">✓</span><span>「土曜のピアノ」を公開しました — 維持率 33.8%</span></div>
+            <div class="f-row dimr"><span class="f-time">00:00</span><span class="mk">–</span><span>7/11 (金) の枠「夕暮れのアンビエント」は承認期限(7 日)を過ぎたため<b>見送り</b>になりました。成果物は 8/10 まで保持されます</span></div>
+          </div>
+
+          <aside>
+            <div class="rail-box">
+              <h4>要確認の枠</h4>
+              <div class="r-ev"><span class="tm">7/20</span>星降る夜の環境音</div>
+              <div class="r-ev"><span class="tm">7/21</span>黄昏シンセ波</div>
+              <button class="plink" type="button" data-goto="schedule" style="margin-top:8px">編成表で確認 →</button>
+            </div>
+            <div class="rail-box">
+              <h4>これからの予定</h4>
+              <div class="r-ev"><span class="tm">20:00</span>実験枠 Future Garage の生成開始</div>
+              <div class="r-ev"><span class="tm">明日 07:00</span>7/20 枠の公開(要承認)</div>
+              <div class="r-ev"><span class="tm">明 03:00</span>7/25 (土) 枠の自動企画</div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の用途</span>
+          <b>出来事のログ + 今日のサマリ。</b>編成表が「各枠がいまどの工程にいるか」を見せるのに対し、タイムラインは「何が起きたか」を時間で記録する。Slack 通知と同じ出来事のシステム内正本であり、監査ログの人間可読ビュー。承認はカードからも直接できる(枠詳細と同じアクション)。
+        </div>
+      </section>
+
+      <!-- ═══════════════ ジャンル ═══════════════ -->
+      <section class="screen" id="screen-genres">
+        <div class="line-head">
+          <h2>ジャンルポートフォリオ</h2>
+          <span class="stat">6 ジャンル(主力 3 / 拡張 2 / 実験 1)・配分合計 100%</span>
+          <span style="margin-left:auto"></span>
+          <button class="btn sm primary" type="button" data-toast="手動追加フォーム(モック): 名称・BPM 帯・参考例を入力し、実験ジャンルとして開始します">＋ 新規ジャンル追加</button>
+        </div>
+
+        <div class="panel" style="padding:18px;margin-bottom:16px">
+          <div style="overflow-x:auto">
+            <table class="g-table">
+              <thead><tr><th>ジャンル</th><th>役割</th><th>配分</th><th>維持率</th><th>推奨 / 操作</th></tr></thead>
+              <tbody>
+                <tr><td>Lo-Fi Hip Hop</td><td><span class="pill role-main">主力</span></td><td><span class="alloc num"><span class="bar"><i style="width:28%"></i></span>28%</span></td><td class="mono">44.2%</td><td>—</td></tr>
+                <tr><td>Chillhop</td><td><span class="pill role-main">主力</span></td><td><span class="alloc num"><span class="bar"><i style="width:24%"></i></span>24%</span></td><td class="mono">41.8%</td><td>—</td></tr>
+                <tr><td>Ambient</td><td><span class="pill role-main">主力</span></td><td><span class="alloc num"><span class="bar"><i style="width:20%"></i></span>20%</span></td><td class="mono">40.6%</td><td>—</td></tr>
+                <tr><td>Synthwave</td><td><span class="pill role-ext">拡張</span></td><td><span class="alloc num"><span class="bar"><i style="width:14%"></i></span>14%</span></td><td class="mono">38.9%</td><td>—</td></tr>
+                <tr><td>Piano Solo</td><td><span class="pill role-ext">拡張</span></td><td><span class="alloc num"><span class="bar"><i style="width:8%"></i></span>8%</span></td><td class="mono">33.1%</td><td><span class="pill warn">縮小候補</span> <button class="btn sm ghost-red" type="button" data-toast="Piano Solo の撤退(無効化)は運営判断です — 確認のうえ監査ログに記録(モック)">撤退…</button></td></tr>
+                <tr><td>Future Garage</td><td><span class="pill role-exp">実験</span></td><td><span class="alloc num"><span class="bar"><i style="width:6%"></i></span>6%</span></td><td class="mono">46.3%</td><td><button class="btn sm primary" type="button" data-toast="Future Garage を主力に昇格しました(モック)。監査ログに記録されます">主力に昇格</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="lv-note" style="margin-top:10px">配分の縮小・微調整は週次分析が自動で行う。<b style="color:var(--text)">昇格・撤退・新規追加だけが人の承認</b>。すべて監査ログに記録。配分は編成表の「おまかせ」枠のジャンル選択に反映される。</div>
+        </div>
+
+        <div class="ch-grid">
+          <div class="panel ch-card">
+            <h3>新規ジャンル候補 <span class="pill" style="margin-left:6px">LLM 提案</span></h3>
+            <p class="lead">週次分析が視聴傾向から提案。追加すると実験ジャンルとして指定できるようになる</p>
+            <div class="cand">
+              <div style="min-width:0;flex:1">
+                <b>Future Bass</b><span class="conf mono">confidence 0.82</span><br>
+                <span class="why">高 BPM×メロディックの近縁チャンネルが伸長中。Synthwave 視聴者と重なる</span>
+              </div>
+              <button class="btn sm" type="button" data-toast="実験ジャンルとして追加しました — 編成に出すには公開枠の設定でこのジャンルを指定してください(モック)">実験に追加</button>
+            </div>
+            <div class="cand">
+              <div style="min-width:0;flex:1">
+                <b>Jazzhop</b><span class="conf mono">confidence 0.74</span><br>
+                <span class="why">Lo-Fi Hip Hop のコメントに「ジャズっぽさが好き」が頻出</span>
+              </div>
+              <button class="btn sm" type="button" data-toast="実験ジャンルとして追加しました — 編成に出すには公開枠の設定でこのジャンルを指定してください(モック)">実験に追加</button>
+            </div>
+            <div class="cand">
+              <div style="min-width:0;flex:1">
+                <b>Dark Ambient</b><span class="conf mono">confidence 0.61</span><br>
+                <span class="why">Ambient の夜間視聴が多い。ただし市場規模は小さめ</span>
+              </div>
+              <button class="btn sm" type="button" data-toast="実験ジャンルとして追加しました — 編成に出すには公開枠の設定でこのジャンルを指定してください(モック)">実験に追加</button>
+            </div>
+          </div>
+
+          <div class="panel ch-card">
+            <h3>role 遷移履歴</h3>
+            <p class="lead">すべて監査ログに記録される</p>
+            <div class="hist"><span class="tm mono">7/06</span>Future Garage: 候補 → 実験(LLM 提案を承認)</div>
+            <div class="hist"><span class="tm mono">6/29</span>Vaporwave: 実験 → 無効化(4 週連続 維持率最下位)</div>
+            <div class="hist"><span class="tm mono">6/15</span>Piano Solo: 主力 → 拡張 に降格</div>
+            <div class="hist"><span class="tm mono">6/01</span>初期 6 ジャンルで運用開始</div>
+          </div>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の用途</span>
+          ジャンルの一覧・追加・昇格/撤退・履歴を集約。日々の配分調整は自動で、<b>人の承認が要るのはポートフォリオの形が変わる判断(昇格・撤退・追加)だけ</b>。ここで決めた配分と role が、編成表の「おまかせ」枠と実験指定の選択肢になる。
+        </div>
+      </section>
+
+      <!-- ═══════════════ 分析 ═══════════════ -->
+      <section class="screen" id="screen-analytics">
+        <div class="obj-card">
+          <span class="eyebrow">このチャンネルが目指すもの — 自動判断はすべてこの基準による</span>
+          <div class="ol"><span class="tag main">主目的</span><span><b>週の総視聴時間</b>を最大にする</span></div>
+          <div class="ol"><span class="tag guard">下限</span><span>ジャンル別の視聴維持率が、そのジャンルの<b>直近実績(中央値)の 80%</b> を下回らないこと</span></div>
+          <div class="lv-note" style="margin-top:7px">おまかせ枠のジャンル選択・配分の自動縮小・昇格や撤退の提案は、すべてこの 2 つで判断します。判断に使った数値は各画面に表示します。<b style="color:var(--text)">使うのは公開から 7 日を過ぎた確定値だけ</b>で、公開直後の暫定値は判断に入りません。</div>
+        </div>
+
+        <div class="kpis">
+          <div class="panel kpi" style="border-color:rgba(139,92,246,.4)"><div class="k-l">総視聴時間 (30日)</div><div class="k-v" style="color:var(--accent-hi)">892 h</div><div class="k-d">+24.5% vs 前期</div></div>
+          <div class="panel kpi"><div class="k-l">平均視聴維持率</div><div class="k-v">41.2%</div><div class="k-d">+2.1pt</div></div>
+          <div class="panel kpi"><div class="k-l">総再生回数 (30日)</div><div class="k-v">12,438</div><div class="k-d">+18.2%</div></div>
+          <div class="panel kpi"><div class="k-l">公開本数</div><div class="k-v">31</div><div class="k-d" style="color:var(--muted)">枠の消化率 94%(見送り 2)</div></div>
+        </div>
+
+        <div class="an-grid">
+          <div class="panel an-card">
+            <h3>ジャンル別 視聴維持率 (30日)</h3>
+            <div class="hbar"><span class="g-name">Future Garage</span><span class="track2"><i style="width:92%;background:#7BE3A8"></i><span class="hb-limit" style="left:74%"></span></span><span class="val">46.3%</span></div>
+            <div class="hbar"><span class="g-name">Lo-Fi Hip Hop</span><span class="track2"><i style="width:88%;background:#C0A8F5"></i><span class="hb-limit" style="left:70.8%"></span></span><span class="val">44.2%</span></div>
+            <div class="hbar"><span class="g-name">Chillhop</span><span class="track2"><i style="width:83%;background:#F0C36B"></i><span class="hb-limit" style="left:66.8%"></span></span><span class="val">41.8%</span></div>
+            <div class="hbar"><span class="g-name">Ambient</span><span class="track2"><i style="width:81%;background:#7BD8E8"></i><span class="hb-limit" style="left:68.4%"></span></span><span class="val">40.6%</span></div>
+            <div class="hbar"><span class="g-name">Synthwave</span><span class="track2"><i style="width:77%;background:#F58BC0"></i><span class="hb-limit" style="left:62.2%"></span></span><span class="val">38.9%</span></div>
+            <div class="hbar"><span class="g-name">Piano Solo</span><span class="track2"><i style="width:66%;background:#F5B84D"></i><span class="hb-limit" style="left:70.4%"></span></span><span class="val low">33.1%</span></div>
+            <div class="legend" style="margin-bottom:0"><span><span style="display:inline-block;width:2px;height:11px;background:rgba(245,184,77,.85);vertical-align:-2px;margin-right:6px"></span>下限 (直近実績の中央値 × 80%)</span></div>
+            <div class="nbox" style="margin-top:4px">Piano Solo は 2 週続けて下限(35.2%)を下回りました。<b>来週の配分を 8% → 4% に自動で縮小します</b>。撤退は自動では行わず、ジャンル画面から承認してください。</div>
+          </div>
+
+          <div class="panel an-card">
+            <h3>視聴者の声 (30日) <span class="pill" style="margin-left:6px">読み取りのみ</span></h3>
+            <p class="lead" style="font-size:12px;color:var(--dim);margin:-8px 0 10px">コメント 218 件 · 好意的 71% / 中立 25% / 否定的 4% — 企画 LLM への参考情報として渡されます(返信・削除はこのシステムからは行いません)</p>
+            <div class="voice"><span class="sent pos mono">好意</span><span>「作業用に最適」「寝落ちできる」— Ambient と Chillhop に集中</span></div>
+            <div class="voice"><span class="sent pos mono">好意</span><span>「ジャズっぽさが好き」— Lo-Fi Hip Hop に 14 件。新ジャンル候補 Jazzhop の根拠</span></div>
+            <div class="voice"><span class="sent neu mono">中立</span><span>「曲の切り替わりが唐突」— 6 件。チャプター境界の作り方への指摘</span></div>
+          </div>
+
+          <div class="panel an-card">
+            <h3>再生回数 上位動画 (30日)</h3>
+            <div class="top-video"><span class="rank">1</span><span class="mini-thumb" style="--g1:#7BE3A8;--g2:#1A1440;width:64px;aspect-ratio:16/9"></span><span>雨上がりのガラージュ</span><span class="v num">1,842</span></div>
+            <div class="top-video"><span class="rank">2</span><span class="mini-thumb" style="--g1:#C0A8F5;--g2:#1A1440;width:64px;aspect-ratio:16/9"></span><span>雨音とローファイ</span><span class="v num">1,516</span></div>
+            <div class="top-video"><span class="rank">3</span><span class="mini-thumb" style="--g1:#F0C36B;--g2:#4D2159;width:64px;aspect-ratio:16/9"></span><span>午後のチルホップ</span><span class="v num">1,203</span></div>
+            <div class="top-video"><span class="rank">4</span><span class="mini-thumb" style="--g1:#38C8E8;--g2:#1A1440;width:64px;aspect-ratio:16/9"></span><span>星降る夜の環境音</span><span class="v num">987</span></div>
+          </div>
+        </div>
+
+        <div class="panel loop-card">
+          <span class="eyebrow" style="flex-basis:100%">フィードバックループ</span>
+          <span class="loop-step"><span class="b"></span>7/13 (月) 週次分析 完了</span>
+          <span class="loop-arrow">→</span>
+          <span class="loop-step"><span class="b"></span>7/14 以降の枠の企画に反映済み</span>
+          <span class="loop-arrow">→</span>
+          <span class="loop-step next"><span class="b"></span>次回 7/20 (月) 03:00 自動実行</span>
+        </div>
+
+        <div class="panel ch-card" style="margin-top:16px">
+          <h3>今週の方針 <span class="pill" style="margin-left:6px">週次分析より</span></h3>
+          <p class="lead">2026-07-13 (月) の分析を反映済み · 次回更新 2026-07-20 (月)</p>
+          <ul class="policy">
+            <li><b>Future Garage は 1 本あたりの総視聴時間が最大(34.2 時間)</b>で、維持率も下限を上回る。実験の枠を週 1 → 2 に増やす提案(← ジャンル画面で昇格を承認すると反映)</li>
+            <li><b>Piano Solo は 2 週連続で下限を下回った。</b>配分 8% → 4% に自動縮小(縮小は承認不要、撤退のみ要承認)</li>
+            <li>先週の却下理由「低音が単調」を受けて、Ambient の音作り指示を更新済み</li>
+          </ul>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ</span>
+          実績の可視化と、<b>「分析がいつ・どう枠の企画に反映されるか」</b>(フィードバックループ)の明示。週次の方針もここに載る — 分析は見て終わりではなく、編成とジャンル配分への入力である。
+        </div>
+      </section>
+
+      <!-- ═══════════════ プロンプト ═══════════════ -->
+      <section class="screen" id="screen-prompts">
+        <div class="pr-grid">
+          <div>
+            <div class="eyebrow" style="margin:2px 0 10px">工程ごとの指示書</div>
+            <button class="pr-item sel" type="button">
+              <span class="pr-t">企画 (planner)</span>
+              <span class="pr-m">使う工程: 企画 · v3 使用中 · 7/12 更新</span>
+            </button>
+            <button class="pr-item" type="button" data-toast="モックでは 企画(planner) のみ編集ビューを用意しています">
+              <span class="pr-t">仕上げ (finisher)</span>
+              <span class="pr-m">使う工程: パッケージング · v2 使用中</span>
+            </button>
+            <button class="pr-item" type="button" data-toast="モックでは 企画(planner) のみ編集ビューを用意しています">
+              <span class="pr-t">タイトル (title)</span>
+              <span class="pr-m">使う工程: パッケージング · v1 使用中</span>
+            </button>
+            <button class="pr-item" type="button" data-toast="モックでは 企画(planner) のみ編集ビューを用意しています">
+              <span class="pr-t">説明文 (description)</span>
+              <span class="pr-m">使う工程: パッケージング · v1 使用中</span>
+            </button>
+            <div class="lv-note" style="padding:2px 4px">プロンプトは工程と 1:1 で対応。枠詳細のメタからもここに飛べます。</div>
+          </div>
+
+          <div class="panel" style="padding:18px">
+            <div class="editor-head">
+              <h3>企画プロンプト (planner)</h3>
+              <button class="ver-pill on" type="button">v3 使用中</button>
+              <button class="ver-pill" type="button" data-toast="v2 を表示(モック)">v2</button>
+              <button class="ver-pill" type="button" data-toast="v1 を表示(モック)">v1</button>
+              <span style="margin-left:auto"></span>
+              <button class="btn sm" type="button" data-toast="バージョン間の差分表示(モック)">差分</button>
+              <button class="btn sm" type="button" data-toast="v3 を元に下書き v4 を作成しました(モック)">＋ 新しい下書き</button>
+            </div>
+            <div class="code">あなたは YouTube 音楽チャンネルの編成担当です。
+過去 <span class="tok-var">{{window_days}}</span> 日の実績と、直近の却下理由をもとに、
+指定された枠に出す動画の企画を 1 件立ててください。
+
+# 入力
+- 枠のジャンル指定: <span class="tok-var">{{slot_genre}}</span> (「おまかせ」の場合は候補から選ぶ)
+- ジャンル候補と配分: <span class="tok-var">{{genre_candidates}}</span>
+- 実績サマリ: <span class="tok-var">{{metrics_summary}}</span>
+- 直近の却下理由: <span class="tok-var">{{reject_reasons}}</span>
+
+# 制約
+- BPM とキーは 6 トラック共通で固定する
+- <span class="tok-free">{{6 つのサブテーマは、ひと続きの情景になるように並べる}}</span>
+- 維持率が下限(そのジャンルの直近実績の中央値 × 80%)を下回るジャンルは選ばない
+- 条件を満たす候補のうち、1 本あたりの総視聴時間の期待値が高いものを優先する
+
+# 出力 (JSON)
+genre / theme / subthemes[6] / bpm / key / mood / visual_direction</div>
+            <div class="legend">
+              <span><span class="tok-var">{{変数}}</span> システムが値を埋める</span>
+              <span><span class="tok-free">{{自由文}}</span> LLM への指示としてそのまま展開</span>
+            </div>
+            <div class="ed-stats">
+              <span>このバージョンの企画 <b>12 件</b></span>
+              <span>平均視聴維持率 <b>41.2%</b> <span style="color:var(--dim)">(v2: 39.0%)</span></span>
+              <span>平均コスト <b>$0.014</b> / 回</span>
+            </div>
+            <div class="ed-actions">
+              <button class="btn sm" type="button" data-toast="下書きとして保存しました(モック)">下書き保存</button>
+              <button class="btn sm" type="button" data-toast="枠に影響を与えずに企画を 1 件試作します — 結果はこの画面に表示(モック)">試しに 1 件生成</button>
+              <button class="btn sm primary" type="button" data-toast="このバージョンを使用中にしました — 監査ログに記録(モック)">このバージョンを使用中にする</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の用途</span>
+          プロンプト(各工程への指示書)の見直し・試行・バージョン管理。カテゴリは工程と 1:1。「試しに 1 件生成」で枠に影響を与えずに出力を確認できる。バージョン切替は監査ログに記録。
+        </div>
+      </section>
+
+      <!-- ═══════════════ 設定 ═══════════════ -->
+      <section class="screen" id="screen-settings">
+        <div class="set-grid">
+
+          <div class="panel set-card">
+            <h3>自動運転レベル</h3>
+            <button class="lv-opt sel" type="button" data-level="0">
+              <span class="lv-k">L0</span>
+              <span style="min-width:0"><span class="lv-t">監督モード</span><br><span class="lv-d">公開前に必ず枠を開いて承認する。承認しない枠は見送りになる。</span></span>
+              <span class="radio"></span>
+            </button>
+            <button class="lv-opt locked" type="button" data-level="1" data-locked="あと 3 枠、無修正での承認が続けば L1 を選べるようになります(モック)">
+              <span class="lv-k">L1</span>
+              <span style="min-width:0"><span class="lv-t">事後確認モード</span><br><span class="lv-d">検査を通った枠は自動で公開。公開時に通知が届き、いつでも取り下げ(非公開化)できる。</span>
+                <span class="lv-req"><span class="lk">🔒</span><span>選べる条件: 直近 10 枠が連続で無修正承認 + 検査の自動不合格 0 — 現在 <b>7 / 10 枠</b></span></span>
+              </span>
+              <span class="radio lock"></span>
+            </button>
+            <button class="lv-opt locked" type="button" data-level="2" data-locked="L2 は L1 を 30 日以上運用してからになります。まず L1 の条件を満たしてください(モック)">
+              <span class="lv-k">L2</span>
+              <span style="min-width:0"><span class="lv-t">全自動モード</span><br><span class="lv-d">完全自動運転。異常(検査 NG・エラー・停止)のときだけ通知される。</span>
+                <span class="lv-req"><span class="lk">🔒</span><span>選べる条件: L1 を 30 日以上運用 + 取り下げ 0 + コンプラ違反 0 — 現在 <b>L1 未運用</b></span></span>
+              </span>
+              <span class="radio lock"></span>
+            </button>
+            <div class="nbox pur">
+              <b>下げるのはいつでもできます。</b>条件が要るのは上げるときだけで、L2 → L0 も 1 回の操作で即座に戻せます。レベルの変更は監査ログに記録されます。
+            </div>
+          </div>
+
+          <div class="panel set-card">
+            <h3>システムの状態</h3>
+            <div class="sysline"><span class="sdot"></span><b>稼働中</b><span style="color:var(--dim);font-size:12px">— 制作も公開も動いています</span></div>
+            <div class="kv"><span class="k">最後のサマリ送信</span><span class="v mono">今日 07:30 · Slack</span></div>
+            <div class="kv"><span class="k">コンプラ自動停止</span><span class="v"><span class="pill ok">有効</span></span></div>
+            <div class="lv-note" style="margin-top:9px">指紋の一致や YouTube からの警告を検知すると、<b style="color:var(--text)">操作を待たずに公開を止め</b>、該当動画を非公開にし、自動運転を L0 に戻します。</div>
+            <div class="eyebrow" style="margin-top:14px">止めるとき</div>
+            <div class="cmd">ymg pause-publishing <span class="c"># 公開だけ止める(制作は続く)</span>
+ymg stop <span class="c">            # 全部止める</span>
+ymg resume <span class="c">          # 再開する</span></div>
+            <div class="lv-note" style="margin-top:8px">停止は <b style="color:var(--text)">CLI と Slack から</b>行います。この画面には状態を表示するだけで、操作ボタンは置きません — 止めたいときに手元にあるのは端末か携帯だからです。毎朝 07:30 のサマリが届かない日は、システムが止まっていると判断してください。</div>
+          </div>
+
+          <div class="panel set-card">
+            <h3>LLM プロバイダ</h3>
+            <div class="kv"><span class="k">プロバイダ / モデル</span><span class="v mono">Anthropic · claude-sonnet-5</span></div>
+            <div class="kv"><span class="k">認証</span><span class="v">API キー (環境変数で設定済み)</span></div>
+            <div class="kv"><span class="k">今月の利用額</span><span class="v mono">$12.40 / $50.00</span></div>
+            <div class="budget-bar"><i></i></div>
+            <div class="lv-note">50 / 80 / 100% 到達で通知。切替は監査ログに記録。</div>
+            <div style="margin-top:12px"><button class="btn sm" type="button" data-toast="プロバイダ切替フォーム(モック外)">切り替える</button></div>
+          </div>
+
+          <div class="panel set-card">
+            <h3>GPU ワーカー</h3>
+            <div class="kv"><span class="k">状態</span><span class="v"><span class="pill ok">稼働中</span></span></div>
+            <div class="kv"><span class="k">ハードウェア</span><span class="v mono">RTX 3090 · 24 GB</span></div>
+            <div class="kv"><span class="k">VRAM 使用</span><span class="v mono">18.2 / 24.0 GB</span></div>
+            <div class="vram-bar"><i></i></div>
+            <div class="kv"><span class="k">ロード済みモデル</span><span class="v">ACE-Step 1.5 · Juggernaut XL v10</span></div>
+            <div class="kv"><span class="k">実行待ち</span><span class="v">2 件(公開予定の早い枠から順に)</span></div>
+            <div class="lv-note" style="margin-top:9px">GPU は 1 本ずつ処理します。枠を増やせばその分だけ待ち時間が伸びますが、公開予定時刻が近い枠から実行するため、直近の枠が後回しになることはありません。</div>
+          </div>
+
+          <div class="panel set-card">
+            <h3>バックアップ・監査</h3>
+            <div class="kv"><span class="k">DB バックアップ</span><span class="v">今日 03:00 完了 <span class="pill ok">OK</span></span></div>
+            <div class="kv"><span class="k">YouTube 連携</span><span class="v"><span class="pill ok">認証済み</span> 7/02 更新</span></div>
+            <div class="kv"><span class="k">今日の公開枠</span><span class="v mono">1 / 6 本(API 割当)</span></div>
+            <div class="kv"><span class="k">通知先</span><span class="v mono">Slack #ymg-alerts</span></div>
+            <div class="kv"><span class="k">監査ログ</span><span class="v"><button class="btn sm" type="button" data-toast="監査ログ一覧(モック外): レベル変更・昇格承認・パターン変更などを記録">全件を表示</button></span></div>
+          </div>
+
+        </div>
+
+        <div class="mock-note">
+          <span class="eyebrow">設計メモ — この画面の用途</span>
+          運転中に触らない「基盤」+ 低頻度の運転設定(自動運転レベル)。旧「運営方針」画面は廃止し、レベルはここへ、週次方針は分析へ移した。<b>自動運転レベルは実績を満たすまで上げられない</b>(条件と現在地を出す)が、下げるのはいつでも即座にできる。<b>停止操作は画面に置かない</b> — 状態だけを表示し、操作は CLI と Slack に持たせる。
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+
+  const screens = {
+    schedule:   {title:'編成表',       sub:'ホーム — 週の枠が起点。枠を開くと工程ごとの詳細へ'},
+    journal:    {title:'タイムライン', sub:'出来事のログと今日のサマリ — 承認はカードからも'},
+    slotdetail: {title:'枠詳細',       sub:'7/20 (月) 07:00 の枠 — 各工程がどう実施されたか + 工程単位のやり直し'},
+    slotdone:   {title:'枠詳細(公開済み)', sub:'7/19 (日) 07:00 の枠 — 実績・視聴者の声・取り下げ・保持状況'},
+    genres:     {title:'ジャンル',     sub:'ポートフォリオ — 主力/拡張/実験の構成と新ジャンル候補'},
+    analytics:  {title:'分析',         sub:'実績と週次方針 — 編成とジャンル配分への入力'},
+    prompts:    {title:'プロンプト',   sub:'各工程への指示書 — 内容の見直し・試行・バージョン管理'},
+    settings:   {title:'設定',         sub:'自動運転レベル・LLM・GPU・バックアップ'},
+  };
+
+  function goto(key){
+    $$('.screen').forEach(s => s.classList.toggle('active', s.id === 'screen-' + key));
+    const navKey = (key === 'slotdetail' || key === 'slotdone') ? 'schedule' : key;
+    $$('.nav-btn[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === navKey));
+    $('#screenTitle').textContent = screens[key].title;
+    $('#screenSub').textContent = screens[key].sub;
+    window.scrollTo({top:0});
+  }
+  $$('.nav-btn[data-nav]').forEach(b => b.addEventListener('click', () => goto(b.dataset.nav)));
+  $$('[data-goto]').forEach(b => b.addEventListener('click', () => goto(b.dataset.goto)));
+
+  /* toast */
+  let toastTimer;
+  function toast(msg){
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 3400);
+  }
+  $$('[data-toast]').forEach(b => b.addEventListener('click', () => toast(b.dataset.toast)));
+
+  /* 自動運転レベル */
+  const LEVELS = [
+    {key:'L0', name:'監督モード'},
+    {key:'L1', name:'事後確認モード'},
+    {key:'L2', name:'全自動モード'},
+  ];
+  $$('.lv-opt').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.classList.contains('locked')) { toast(btn.dataset.locked); return; }
+    const lv = LEVELS[+btn.dataset.level];
+    $$('.lv-opt').forEach(b => b.classList.toggle('sel', b === btn));
+    $('#levelKey').textContent = lv.key;
+    $('#levelName').textContent = lv.name;
+    toast('自動運転レベルを ' + lv.key + '(' + lv.name + ') に変更しました — 監査ログに記録(モック)');
+  }));
+
+  /* 枠詳細: 公開ゲート (ADR-0045 awaiting_approval / approved / rejected_pending) */
+  function bumpBadge(delta){
+    const b = $('#schedBadge');
+    if (!b) return;
+    const n = Math.max(0, (+b.textContent || 0) + delta);
+    b.textContent = n || '';
+    b.style.display = n ? '' : 'none';
+  }
+
+  const GATE = {
+    pending:  {name:'公開待ち — あなたの承認待ち', pill:'公開待ち — 要確認',  cls:'pill gatep', dl:'承認期限 7/27 (月) 07:00 · あと 7 日',        col:'var(--warn)', st:'now'},
+    approved: {name:'公開待ち — 承認済み',          pill:'承認済み — 公開予約', cls:'pill ok',    dl:'7/20 (月) 07:00 に自動で公開',                 col:'var(--good)', st:'approvedst'},
+    rejected: {name:'却下済み — 処置待ち',          pill:'却下済み — 処置待ち', cls:'pill bad',   dl:'7/27 (月) 07:00 までに処置しなければ見送り', col:'var(--red)',  st:'rejected'},
+  };
+  let gateState = 'pending';
+  function setGate(next){
+    if (next === gateState) return;
+    const g = GATE[next], stage = $('#gateStage');
+    $('#gateActions').style.display = next === 'pending' ? '' : 'none';
+    $('#approvedBox').classList.toggle('open', next === 'approved');
+    $('#rejectedBox').classList.toggle('open', next === 'rejected');
+    $('#rejectArea').classList.remove('open');
+    stage.classList.remove('now','approvedst','rejected');
+    stage.classList.add(g.st);
+    $('#gateName').textContent = g.name;
+    const pill = $('#slotStatePill');
+    pill.textContent = g.pill;
+    pill.className = g.cls;
+    const dl = $('#gateDeadline');
+    dl.textContent = g.dl;
+    dl.style.color = g.col;
+    bumpBadge(next === 'pending' ? 1 : (gateState === 'pending' ? -1 : 0));
+    gateState = next;
+  }
+
+  function approveSlot(){
+    setGate('approved');
+    toast('7/20 (月) 枠「星降る夜の環境音」を承認しました。07:00 JST に公開されます(モック)');
+  }
+  $('#approveBtn').addEventListener('click', approveSlot);
+  $('#jrApprove').addEventListener('click', approveSlot);
+  $('#unapproveBtn').addEventListener('click', () => {
+    setGate('pending');
+    toast('承認を取り消しました。公開されません(モック)');
+  });
+  $('#rejectToggle').addEventListener('click', () => $('#rejectArea').classList.toggle('open'));
+  $('#rejectConfirm').addEventListener('click', () => {
+    setGate('rejected');
+    toast('却下しました。理由は次回の企画 LLM に反映されます。枠は「却下済み(処置待ち)」です(モック)');
+  });
+
+  /* 公開枠エディタ */
+  const DAYS = ['月','火','水','木','金','土','日'];
+  const TIMES = ['05:00','06:00','07:00','08:00','12:00','18:00','20:00','21:00'];
+  const GENRE_OPTIONS = '<option value="auto">おまかせ (AI)</option>'
+    + '<optgroup label="主力"><option>Lo-Fi Hip Hop</option><option>Chillhop</option><option>Ambient</option></optgroup>'
+    + '<optgroup label="拡張"><option>Synthwave</option><option>Piano Solo</option></optgroup>'
+    + '<optgroup label="実験"><option>Future Garage</option></optgroup>';
+  const PATTERN = [
+    ['月','07:00','Lo-Fi Hip Hop'], ['火','07:00','Chillhop'], ['水','07:00','Ambient'],
+    ['木','07:00','Synthwave'], ['金','07:00','auto'], ['土','07:00','Piano Solo'],
+    ['日','07:00','Chillhop'], ['日','20:00','Future Garage'],
+  ];
+  function slotRow(d, t, g){
+    const day = DAYS.map(x => `<option${x === d ? ' selected' : ''}>${x}</option>`).join('');
+    const tm = TIMES.map(x => `<option${x === t ? ' selected' : ''}>${x}</option>`).join('');
+    const row = document.createElement('div');
+    row.className = 'srow';
+    row.innerHTML = `<select class="sel" aria-label="曜日">${day}</select>`
+      + `<select class="sel" aria-label="時刻">${tm}</select>`
+      + `<select class="sel grow" aria-label="ジャンル指定">${GENRE_OPTIONS}</select>`
+      + `<button class="row-del" type="button" aria-label="この枠を削除">✕</button>`;
+    row.querySelector('[aria-label="ジャンル指定"]').value = g;
+    return row;
+  }
+  const patRows = $('#patRows');
+  PATTERN.forEach(p => patRows.appendChild(slotRow(...p)));
+  $('#addSlotRow').addEventListener('click', () => patRows.appendChild(slotRow('月','07:00','auto')));
+  patRows.addEventListener('click', e => {
+    const b = e.target.closest('.row-del');
+    if (b) { b.closest('.srow').remove(); toast('枠を削除しました — 保存で確定(モック)'); }
+  });
+</script>
