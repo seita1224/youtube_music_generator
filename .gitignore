@@ -50,6 +50,9 @@ frontend/lib/api/schema.ts
 # --- ローカル個人設定 ---
 .claude/settings.local.json
 
+# --- ナレッジグラフ生成物 (graphify) ---
+graphify-out/
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db
