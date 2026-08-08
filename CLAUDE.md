@@ -2,13 +2,18 @@
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
 
-- Plan: [specs/001-youtube-music-generator/plan.md](specs/001-youtube-music-generator/plan.md)
-- Spec: [specs/001-youtube-music-generator/spec.md](specs/001-youtube-music-generator/spec.md)
-- Research: [specs/001-youtube-music-generator/research.md](specs/001-youtube-music-generator/research.md)
-- Data model: [specs/001-youtube-music-generator/data-model.md](specs/001-youtube-music-generator/data-model.md)
-- Contracts: [specs/001-youtube-music-generator/contracts/](specs/001-youtube-music-generator/contracts/)
-- Quickstart: [specs/001-youtube-music-generator/quickstart.md](specs/001-youtube-music-generator/quickstart.md)
-- Constitution: [.specify/memory/constitution.md](.specify/memory/constitution.md)
-- ADRs: [specs/001-youtube-music-generator/adr/](specs/001-youtube-music-generator/adr/) (0001–0034)
-- Requirements: [requirements.md](specs/001-youtube-music-generator/requirements.md)
+Current feature: 002-slot-centric-redesign(枠中心モデルへの再設計、ADR-0041〜0050)
+
+- Plan: [specs/002-slot-centric-redesign/plan.md](specs/002-slot-centric-redesign/plan.md)
+- Spec: [specs/002-slot-centric-redesign/spec.md](specs/002-slot-centric-redesign/spec.md)
+- Research: [specs/002-slot-centric-redesign/research.md](specs/002-slot-centric-redesign/research.md)
+- Data model: [specs/002-slot-centric-redesign/data-model.md](specs/002-slot-centric-redesign/data-model.md)
+- Contracts: [specs/002-slot-centric-redesign/contracts/](specs/002-slot-centric-redesign/contracts/)
+- Quickstart: [specs/002-slot-centric-redesign/quickstart.md](specs/002-slot-centric-redesign/quickstart.md)
+- Tasks: [specs/002-slot-centric-redesign/tasks.md](specs/002-slot-centric-redesign/tasks.md)
+- Constitution: [.specify/memory/constitution.md](.specify/memory/constitution.md) (v2.0.0)
+- ADRs: [specs/001-youtube-music-generator/adr/](specs/001-youtube-music-generator/adr/) (0001–0050。正本は 0041–0050、置き換え一覧は 0050)
+- Mockups: [specs/001-youtube-music-generator/mockups/redesign-2026-07/](specs/001-youtube-music-generator/mockups/redesign-2026-07/)
+
+Previous feature (旧モデル、実装は移植元として参照): [specs/001-youtube-music-generator/](specs/001-youtube-music-generator/)
 <!-- SPECKIT END -->

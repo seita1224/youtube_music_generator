@@ -1,14 +1,12 @@
-"""analytics 集計サマリ生成 (T103 / ADR-0021 / ADR-0032)。
+"""analytics 集計サマリ生成 (ADR-0021 / ADR-0032 方針継承)。
 
-planner(週次 / 日次)LLM 入力と frontend ``/analytics`` 概要の双方が消費する、
+企画 LLM 入力と frontend ``/analytics`` 概要の双方が消費する、
 ``analytics_daily`` + ``videos`` + ``genres`` の **読み取り専用** 集計を提供する。
 
-:class:`~ymg_backend.domain.plans.planner.PlanGenerator._aggregate_metrics` が
-``MetricSnapshot``(plan 再現性確保用に ``plan_metric_snapshot`` へ格納する形)を作るのに対し、
 本モジュールはジャンル別の役割(``role``)込みの「現状サマリ」と、 retention 上位の代表動画
-(``top_videos``)を返す。 週次 planner はこの ``AnalyticsSummaryData`` を
-:class:`~ymg_backend.domain.plans.schemas.ReferencedMetrics` の材料や user prompt の集計節へ、
-``/analytics`` API はジャンル別カードへ転用する。
+(``top_videos``)を返す。 企画 LLM は ``AnalyticsSummaryData`` を実績スナップショット
+(``metrics_snapshots``)の材料や user prompt の集計節へ、 ``/analytics`` API は
+ジャンル別カードへ転用する。
 
 集計ウィンドウは「直近 ``window_days`` 日」で、 アンカーは JST の本日。 区間は
 ``[anchor - window_days + 1, anchor]`` の **両端含む**(``analytics_daily.metric_date`` の DATE と

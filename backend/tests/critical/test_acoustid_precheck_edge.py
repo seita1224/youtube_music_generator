@@ -1,7 +1,7 @@
 """Critical path テスト: AcoustID 指紋プレチェック 追加 (T139)。
 
 未到達行 (86% -> 100%) を覆う追加テスト群。
-対象モジュール: ``ymg_backend.domain.pipeline.acoustid``
+対象モジュール: ``ymg_backend.domain.compliance.acoustid``
 
 未到達行:
 - 157-158: aclose() で _owns_client=True 経路
@@ -24,7 +24,7 @@ import pytest
 import respx
 from pydantic import SecretStr
 
-from ymg_backend.domain.pipeline.acoustid import (
+from ymg_backend.domain.compliance.acoustid import (
     ACOUSTID_LOOKUP_URL,
     AcoustidChecker,
     _max_score,

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ymg_backend.domain.errors.errors import ErrorCategory, RecoverableError
-from ymg_backend.domain.pipeline.video_compose import (
+from ymg_backend.domain.render.video_compose import (
     VideoArtifact,
     build_ffmpeg_command,
     compose_video,
@@ -159,11 +159,11 @@ def test_compose_video_writes_output_and_returns_artifact(
         return _CompletedStub(returncode=0)
 
     monkeypatch.setattr(
-        "ymg_backend.domain.pipeline.video_compose.shutil.which",
+        "ymg_backend.domain.render.video_compose.shutil.which",
         lambda _name: "/usr/bin/ffmpeg",
     )
     monkeypatch.setattr(
-        "ymg_backend.domain.pipeline.video_compose.subprocess.run",
+        "ymg_backend.domain.render.video_compose.subprocess.run",
         fake_run,
     )
 
@@ -193,7 +193,7 @@ def test_compose_video_raises_when_ffmpeg_missing(
     storage = _FakeStorage(contents)
 
     monkeypatch.setattr(
-        "ymg_backend.domain.pipeline.video_compose.shutil.which",
+        "ymg_backend.domain.render.video_compose.shutil.which",
         lambda _name: None,
     )
 
@@ -220,11 +220,11 @@ def test_compose_video_raises_on_nonzero_exit(
         return _CompletedStub(returncode=1, stderr=b"boom")
 
     monkeypatch.setattr(
-        "ymg_backend.domain.pipeline.video_compose.shutil.which",
+        "ymg_backend.domain.render.video_compose.shutil.which",
         lambda _name: "/usr/bin/ffmpeg",
     )
     monkeypatch.setattr(
-        "ymg_backend.domain.pipeline.video_compose.subprocess.run",
+        "ymg_backend.domain.render.video_compose.subprocess.run",
         fake_run,
     )
 

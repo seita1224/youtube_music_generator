@@ -39,6 +39,8 @@ dependencies = [
     "anthropic>=0.39.0",
     "openai>=1.51.0",
     "ollama>=0.3.3",
+    "typer>=0.27.1",
+    "slack-bolt>=1.30.0",
 ]
 
 [dependency-groups]
@@ -52,6 +54,7 @@ dev = [
     "factory-boy>=3.3.1",
     "freezegun>=1.5.1",
     "types-pyyaml>=6.0.12",
+    "hypothesis>=6.165.2",
 ]
 
 [build-system]

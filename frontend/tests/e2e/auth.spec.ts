@@ -6,7 +6,7 @@ import { ADMIN_PASSWORD, ADMIN_USER, loginViaApi, loginViaUi } from "./helpers";
 
 test.describe("認証フロー", () => {
   test("未認証の管理画面は /login へリダイレクトする", async ({ page }) => {
-    await page.goto("/scheduler");
+    await page.goto("/timeline");
     await expect(page).toHaveURL(/\/login/);
     await expect(page.getByTestId("login-form")).toBeVisible();
     await expect(page).toHaveURL(/next=/);
@@ -36,7 +36,7 @@ test.describe("認証フロー", () => {
     ]);
     const api = await page.request.get("/api/backend/health");
     expect(api.status()).toBe(401);
-    await page.goto("/scheduler");
+    await page.goto("/timeline");
     await expect(page).toHaveURL(/\/login/);
   });
 
@@ -102,12 +102,12 @@ test.describe("認証フロー", () => {
 
   test("BFF unsafe メソッドのクロスオリジンは 403", async ({ page }) => {
     await loginViaApi(page);
-    const res = await page.request.post("/api/backend/scheduler", {
+    const res = await page.request.post("/api/backend/system/state", {
       headers: {
         Origin: "http://evil.example",
         "Content-Type": "application/json",
       },
-      data: { enabled: true },
+      data: { state: "running" },
     });
     expect(res.status()).toBe(403);
   });
@@ -126,11 +126,11 @@ test.describe("認証フロー", () => {
   test("ブラウザ: ログイン → 管理画面 → ログアウト", async ({ page }) => {
     await loginViaUi(page);
     await expect(page.getByTestId("sidebar-username")).toContainText(ADMIN_USER);
-    await page.goto("/llm");
-    await expect(page).toHaveURL(/\/llm/);
+    await page.goto("/settings");
+    await expect(page).toHaveURL(/\/settings/);
     await page.getByTestId("sidebar-logout").click();
     await expect(page).toHaveURL(/\/login/);
-    await page.goto("/llm");
+    await page.goto("/settings");
     await expect(page).toHaveURL(/\/login/);
   });
 });

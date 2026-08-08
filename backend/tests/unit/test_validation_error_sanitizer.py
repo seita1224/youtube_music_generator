@@ -2,27 +2,21 @@
 
 from __future__ import annotations
 
-import io
 import json
-from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from loguru import logger
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticCustomError
 
-from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.validation_errors import (
     REDACTED_INPUT,
     is_sensitive_field_name,
     register_validation_exception_handler,
     sanitize_validation_errors,
 )
-from ymg_backend.infrastructure.db.session import get_session
-from ymg_backend.main import create_app
 
 _USERNAME = "admin"
 _PASSWORD = "s3cret"
@@ -89,47 +83,6 @@ class _CredentialLikeIn(BaseModel):
     provider: Literal["openai", "anthropic"]
     api_key: str = Field(min_length=1, max_length=2048)
 
-
-class _FakeSession:
-    async def execute(self, stmt: Any) -> Any:
-        class _R:
-            def all(self) -> list[Any]:
-                return []
-
-            def first(self) -> Any | None:
-                return None
-
-            def scalar_one(self) -> int:
-                return 0
-
-        return _R()
-
-    async def flush(self) -> None:
-        return None
-
-    async def commit(self) -> None:
-        return None
-
-    async def rollback(self) -> None:
-        return None
-
-
-async def _fake_get_session() -> AsyncIterator[_FakeSession]:
-    yield _FakeSession()
-
-
-@pytest.fixture
-def client() -> TestClient:
-    settings = Settings(
-        admin_username=_USERNAME,
-        admin_password=SecretStr(_PASSWORD),
-        openai_api_key=SecretStr(""),
-        anthropic_api_key=SecretStr(""),
-    )
-    application = create_app(settings)
-    application.dependency_overrides[get_settings] = lambda: settings
-    application.dependency_overrides[get_session] = _fake_get_session
-    return TestClient(application)
 
 
 def _assert_no_leak(haystack: str, *secrets: str) -> None:
@@ -497,128 +450,6 @@ def test_sanitize_attributed_non_sensitive_scalar_preserved() -> None:
     out = sanitize_validation_errors(errors)
     assert out[0]["input"] == 0
     assert out[1]["input"] == ""
-
-
-# --- HTTP: /llm/credentials -----------------------------------------------------------
-
-
-def test_put_credentials_oversized_api_key_is_422_without_plaintext(
-    client: TestClient,
-) -> None:
-    log_buf = io.StringIO()
-    sink_id = logger.add(log_buf, format="{message} | {extra}", level="WARNING")
-    try:
-        resp = client.put(
-            "/llm/credentials",
-            json={"provider": "openai", "api_key": _DUMMY_OVERSIZED_KEY},
-            auth=_AUTH,
-        )
-    finally:
-        logger.remove(sink_id)
-
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert isinstance(detail, list) and detail
-    api_key_errs = [e for e in detail if "api_key" in e.get("loc", [])]
-    assert api_key_errs
-    for err in api_key_errs:
-        assert err.get("input") == REDACTED_INPUT
-        assert "type" in err and "msg" in err and "loc" in err
-    _assert_no_leak(resp.text, _DUMMY_OVERSIZED_KEY, "sk-probe-")
-    _assert_no_leak(log_buf.getvalue(), _DUMMY_OVERSIZED_KEY, "sk-probe-")
-
-
-def test_put_credentials_whitespace_api_key_is_422_without_plaintext(
-    client: TestClient,
-) -> None:
-    resp = client.put(
-        "/llm/credentials",
-        json={"provider": "openai", "api_key": "   \t  "},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    for err in resp.json()["detail"]:
-        if "api_key" in err.get("loc", []):
-            assert err.get("input") == REDACTED_INPUT
-            assert "type" in err and "msg" in err
-
-
-def test_put_credentials_empty_api_key_is_422_without_plaintext(
-    client: TestClient,
-) -> None:
-    resp = client.put(
-        "/llm/credentials",
-        json={"provider": "openai", "api_key": ""},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    for err in resp.json()["detail"]:
-        if "api_key" in err.get("loc", []):
-            assert err.get("input") == REDACTED_INPUT
-
-
-def test_put_credentials_wrong_type_api_key_is_422_without_plaintext(
-    client: TestClient,
-) -> None:
-    resp = client.put(
-        "/llm/credentials",
-        json={"provider": "openai", "api_key": 12345},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    for err in resp.json()["detail"]:
-        if "api_key" in err.get("loc", []):
-            assert err.get("input") == REDACTED_INPUT
-    assert "12345" not in resp.text
-
-
-def test_put_credentials_array_body_redacts_secret(client: TestClient) -> None:
-    """C1: JSON 配列 body は loc=body のみだが input 内の秘密を漏らさない。"""
-    resp = client.put(
-        "/llm/credentials",
-        content=json.dumps([{"api_key": _DUMMY_ARRAY_SECRET}]).encode(),
-        headers={"content-type": "application/json"},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    for err in resp.json()["detail"]:
-        assert err.get("input") == REDACTED_INPUT
-    _assert_no_leak(resp.text, _DUMMY_ARRAY_SECRET)
-
-
-def test_put_credentials_scalar_string_body_redacts_secret(client: TestClient) -> None:
-    """C2: スカラー string body は loc=body のみだが平文を漏らさない。"""
-    resp = client.put(
-        "/llm/credentials",
-        content=json.dumps(_DUMMY_SCALAR_SECRET).encode(),
-        headers={"content-type": "application/json"},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    for err in resp.json()["detail"]:
-        assert err.get("input") == REDACTED_INPUT
-    _assert_no_leak(resp.text, _DUMMY_SCALAR_SECRET)
-
-
-def test_put_credentials_missing_provider_redacts_api_key_in_input(
-    client: TestClient,
-) -> None:
-    """C3: provider 欠落の非機密エラーでも input 内 api_key を伏せる。"""
-    resp = client.put(
-        "/llm/credentials",
-        json={"api_key": _DUMMY_MISSING_PROVIDER_SECRET},
-        auth=_AUTH,
-    )
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert detail
-    for err in detail:
-        inp = err.get("input")
-        if isinstance(inp, dict) and "api_key" in inp:
-            assert inp["api_key"] == REDACTED_INPUT
-        elif "api_key" in err.get("loc", []):
-            assert inp == REDACTED_INPUT
-    _assert_no_leak(resp.text, _DUMMY_MISSING_PROVIDER_SECRET)
 
 
 def test_non_sensitive_validation_keeps_useful_input() -> None:

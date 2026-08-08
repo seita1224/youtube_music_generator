@@ -1,0 +1,905 @@
+openapi: 3.1.0
+info:
+  title: YMG Backend API (Slot-Centric)
+  version: 2.0.0
+  description: |
+    枠(Slot)中心モデルの backend API(ADR-0041〜0050)。
+    - 管理 UI(Next.js セッション認証 BFF)からは /api/backend/* proxy 経由で呼ばれる(ADR-0013 継承)
+    - CLI `ymg` / Slack 受信系は管理トークンで system 系 endpoint を呼ぶ
+    - 停止操作(PUT /system/state)は UI に露出しない(ADR-0044: UI は表示のみ)
+
+servers:
+  - url: http://127.0.0.1:8000
+
+security:
+  - basicAuth: []
+
+paths:
+  /health:
+    get:
+      summary: liveness + 依存状態(DB / GPU worker / system_state / autonomy / llm provider)
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  # ---------- 編成表・パターン・例外(ADR-0041) ----------
+
+  /pattern:
+    get:
+      summary: 現行の公開枠パターン(最新 version + 枠行)
+      operationId: getPattern
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pattern" }
+    put:
+      summary: パターン全体を新 version として保存(empty の将来枠にのみ反映)
+      operationId: putPattern
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatternInput" }
+      responses:
+        "200":
+          description: 保存結果。1 日公開予定が PUBLISH_WARN_PER_DAY 超の日は warnings に列挙(保存は許可、FR-015)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pattern, warnings]
+                properties:
+                  pattern: { $ref: "#/components/schemas/Pattern" }
+                  warnings:
+                    type: array
+                    items: { type: string }
+
+  /exceptions:
+    get:
+      summary: 枠例外の一覧(期間指定)
+      operationId: listExceptions
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SlotException" }
+    post:
+      summary: 単発の例外を追加(休む / ジャンル変更 / 臨時追加)
+      operationId: createException
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SlotExceptionInput" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlotException" }
+
+  /exceptions/{exceptionId}:
+    delete:
+      summary: 例外の取り消し(未物化分にのみ影響)
+      operationId: deleteException
+      parameters:
+        - { in: path, name: exceptionId, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: deleted }
+
+  /schedule:
+    get:
+      summary: 編成表(週間)— 物化済み枠 + 未物化日のパターンプレビュー
+      operationId: getSchedule
+      parameters:
+        - in: query
+          name: week_start
+          required: true
+          schema: { type: string, format: date }
+          description: 週の月曜(JST)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduleWeek" }
+
+  # ---------- 枠(ADR-0045 / 0046 / 0042) ----------
+
+  /slots:
+    get:
+      summary: 枠一覧(state / 期間フィルタ)
+      operationId: listSlots
+      parameters:
+        - { in: query, name: state, schema: { $ref: "#/components/schemas/SlotState" } }
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Slot" }
+    post:
+      summary: 単発枠の追加(adhoc。見送り成果物の再利用元を指定可、ADR-0045 (3))
+      operationId: createAdhocSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdhocSlotInput" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Slot" }
+
+  /slots/{slotId}:
+    get:
+      summary: 枠詳細(成果物・工程 IN/OUT・検査サマリ・承認記録・タイムライン)
+      operationId: getSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlotDetail" }
+    delete:
+      summary: 枠の削除(empty / blocked / in_production のみ。レコード削除、遷移ではない)
+      operationId: deleteSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "204": { description: deleted }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/start:
+    post:
+      summary: 制作の手動開始(T2)
+      operationId: startSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "200": { $ref: "#/components/responses/SlotUpdated" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/approve:
+    post:
+      summary: 公開ゲート承認(T10。承認期限内なら遅延公開も即時実行)
+      operationId: approveSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "200": { $ref: "#/components/responses/SlotUpdated" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/reject:
+    post:
+      summary: 公開ゲート却下(T11、理由必須 → 企画 LLM 入力)
+      operationId: rejectSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/SlotUpdated" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/rerun:
+    post:
+      summary: 工程やり直し(ADR-0046。無効化対象は DAG から導出、approved なら承認失効 T17)
+      operationId: rerunSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RerunRequest" }
+      responses:
+        "200":
+          description: 無効化された成果物の一覧つき
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slot, invalidated]
+                properties:
+                  slot: { $ref: "#/components/schemas/Slot" }
+                  invalidated:
+                    type: array
+                    items: { $ref: "#/components/schemas/ArtifactRef" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/skip:
+    post:
+      summary: 見送り(T9 / T14)
+      operationId: skipSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "200": { $ref: "#/components/responses/SlotUpdated" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/withdraw:
+    post:
+      summary: 取り下げ(T18。YouTube private 化、削除はしない)
+      operationId: withdrawSlot
+      parameters: [{ $ref: "#/components/parameters/slotId" }]
+      responses:
+        "200": { $ref: "#/components/responses/SlotUpdated" }
+        "409": { $ref: "#/components/responses/InvalidState" }
+
+  /slots/{slotId}/artifacts/{artifactId}/file:
+    get:
+      summary: 成果物ファイル配信(動画プレビュー / サムネ / トラック試聴)
+      operationId: getArtifactFile
+      parameters:
+        - { $ref: "#/components/parameters/slotId" }
+        - { in: path, name: artifactId, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            audio/mpeg: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+        "410": { description: 保持期間超過で削除済み(メタは存続、FR-082) }
+
+  # ---------- システム状態・自動運転レベル(ADR-0043 / 0044) ----------
+
+  /system/state:
+    get:
+      summary: システム状態の取得(UI は表示のみに使う)
+      operationId: getSystemState
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+    put:
+      summary: 停止 / 再開(CLI `ymg` と Slack 受信系のみが呼ぶ。UI には露出しない)
+      operationId: putSystemState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { $ref: "#/components/schemas/SystemStateKind" }
+                reason: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+
+  /system/autonomy:
+    get:
+      summary: 自動運転レベル + 昇格条件の達成状況(判定に使った数値つき)
+      operationId: getAutonomy
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyStatus" }
+    put:
+      summary: レベル変更(昇格 = 実績条件を検証、降格 = 無条件即時。監査ログ記録)
+      operationId: putAutonomy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level]
+              properties:
+                level: { $ref: "#/components/schemas/AutonomyLevel" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyStatus" }
+        "409":
+          description: 昇格条件未達(未達理由と現在値を返す)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyStatus" }
+
+  # ---------- ジャンル(運営判断、ADR-0042 / 0047) ----------
+
+  /genres:
+    get:
+      summary: ジャンルポートフォリオ
+      operationId: listGenres
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Genre" }
+    post:
+      summary: 新ジャンル追加(運営判断、監査ログ記録)
+      operationId: createGenre
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GenreInput" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Genre" }
+
+  /genres/{genreId}/role:
+    put:
+      summary: role 遷移(昇格 / 降格 / 撤退 = 運営判断、監査ログ記録)
+      operationId: putGenreRole
+      parameters:
+        - { in: path, name: genreId, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/GenreRole" }
+                enabled: { type: boolean, description: "false = 撤退" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Genre" }
+
+  /genres/recommendations:
+    get:
+      summary: 昇格 / 撤退推奨(算出のみ、自動実行しない。判断数値つき、FR-073/074)
+      operationId: getGenreRecommendations
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GenreRecommendation" }
+
+  # ---------- 分析(ADR-0047 / 0048) ----------
+
+  /analytics/overview:
+    get:
+      summary: 目的カード(週次総視聴時間 + ガードレール状況。7 日未満は provisional 明示)
+      operationId: getAnalyticsOverview
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyticsOverview" }
+
+  /analytics/genres:
+    get:
+      summary: ジャンル別 KPI(確定値 / 暫定値の区別つき)
+      operationId: getAnalyticsGenres
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GenreAnalytics" }
+
+  /analytics/voices:
+    get:
+      summary: 視聴者の声(件数・傾向・代表コメント。読み取り専用)
+      operationId: getViewerVoices
+      parameters:
+        - { in: query, name: video_id, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ViewerVoices" }
+
+  # ---------- タイムライン / プロンプト / LLM / SSE ----------
+
+  /timeline:
+    get:
+      summary: 出来事ログ + 当日サマリ
+      operationId: getTimeline
+      parameters:
+        - { in: query, name: date, schema: { type: string, format: date } }
+        - { in: query, name: slot_id, schema: { type: integer } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TimelineEvent" }
+
+  /prompts:
+    get:
+      summary: 工程 1:1 のプロンプト一覧(全バージョン)
+      operationId: listPrompts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PromptInfo" }
+
+  /prompts/{area}/{name}:
+    put:
+      summary: プロンプト新バージョン保存(以後の既定になる。ADR-0046 (4))
+      operationId: putPrompt
+      parameters:
+        - { in: path, name: area, required: true, schema: { type: string } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromptInfo" }
+
+  /prompts/{area}/{name}/test-run:
+    post:
+      summary: 試しに 1 件生成(枠に影響しない実行、ADR-0041)
+      operationId: testRunPrompt
+      parameters:
+        - { in: path, name: area, required: true, schema: { type: string } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: { type: integer }
+                context: { type: object }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  output: {}
+                  usage: { type: object }
+
+  /llm/providers:
+    get:
+      summary: LLM provider 設定(001 継承)
+      operationId: getLlmProviders
+      responses:
+        "200": { description: OK }
+    put:
+      summary: provider 切替(Anthropic + subscription は 400、001 継承)
+      operationId: putLlmProviders
+      responses:
+        "200": { description: OK }
+        "400": { description: 不正組合せ }
+
+  /llm/usage:
+    get:
+      summary: 月次 LLM コスト集計(001 継承)
+      operationId: getLlmUsage
+      parameters:
+        - { in: query, name: month, schema: { type: string, pattern: "^\\d{4}-\\d{2}$" } }
+      responses:
+        "200": { description: OK }
+
+  /events/stream:
+    get:
+      summary: SSE(枠の状態遷移 / 工程進捗、ADR-0023 継承)
+      operationId: streamEvents
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+
+  parameters:
+    slotId:
+      in: path
+      name: slotId
+      required: true
+      schema: { type: integer }
+
+  responses:
+    SlotUpdated:
+      description: 更新後の枠
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Slot" }
+    InvalidState:
+      description: 状態機械上許可されない遷移(T1〜T18 外)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+
+  schemas:
+    SlotState:
+      type: string
+      enum: [empty, blocked, in_production, awaiting_approval, approved, published, rejected_pending, failed, skipped, withdrawn]
+    ProductionStage:
+      type: string
+      enum: [planning, generating, inspecting, packaging]
+    PublishBlockReason:
+      type: string
+      enum: [system_paused, quota_exhausted]
+    GenreMode:
+      type: string
+      enum: [fixed, auto, experiment]
+    GenreRole:
+      type: string
+      enum: [main, extension, experiment]
+    SystemStateKind:
+      type: string
+      enum: [running, publish_paused, stopped]
+    AutonomyLevel:
+      type: string
+      enum: [l0, l1, l2]
+    ArtifactKind:
+      type: string
+      enum: [plan, track, inspection, mix, chapters, thumbnail, title, description, video, package]
+
+    HealthResponse:
+      type: object
+      required: [status, db, gpu_worker, system_state, autonomy_level, llm_provider]
+      properties:
+        status: { type: string }
+        db: { type: boolean }
+        gpu_worker: { type: boolean }
+        system_state: { $ref: "#/components/schemas/SystemStateKind" }
+        autonomy_level: { $ref: "#/components/schemas/AutonomyLevel" }
+        llm_provider: { type: string }
+
+    Pattern:
+      type: object
+      required: [version, rows]
+      properties:
+        version: { type: integer }
+        note: { type: string }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/PatternRow" }
+
+    PatternInput:
+      type: object
+      required: [rows]
+      properties:
+        note: { type: string }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/PatternRowInput" }
+
+    PatternRow:
+      allOf:
+        - $ref: "#/components/schemas/PatternRowInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer }
+
+    PatternRowInput:
+      type: object
+      required: [weekday, publish_time_jst, genre_mode]
+      properties:
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        publish_time_jst: { type: string, format: time }
+        genre_mode: { $ref: "#/components/schemas/GenreMode" }
+        genre_id: { type: integer, description: "fixed / experiment 時必須" }
+
+    SlotException:
+      allOf:
+        - $ref: "#/components/schemas/SlotExceptionInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer }
+
+    SlotExceptionInput:
+      type: object
+      required: [target_date, kind]
+      properties:
+        target_date: { type: string, format: date }
+        kind: { type: string, enum: [skip, genre_override, adhoc_add] }
+        target_time_jst: { type: string, format: time }
+        publish_time_jst: { type: string, format: time }
+        genre_mode: { $ref: "#/components/schemas/GenreMode" }
+        genre_id: { type: integer }
+        reuse_from_slot_id: { type: integer }
+        note: { type: string }
+
+    ScheduleWeek:
+      type: object
+      required: [week_start, days]
+      properties:
+        week_start: { type: string, format: date }
+        days:
+          type: array
+          items:
+            type: object
+            required: [date, slots, preview]
+            properties:
+              date: { type: string, format: date }
+              slots:
+                type: array
+                items: { $ref: "#/components/schemas/Slot" }
+              preview:
+                description: 未物化日のパターン + 例外プレビュー
+                type: array
+                items: { $ref: "#/components/schemas/PatternRow" }
+              publish_warn: { type: boolean, description: "公開予定が警告閾値超(FR-015)" }
+
+    Slot:
+      type: object
+      required: [id, publish_at, origin, genre_mode, genre_id, state, approval_deadline_at]
+      properties:
+        id: { type: integer }
+        publish_at: { type: string, format: date-time }
+        origin: { type: string, enum: [pattern, adhoc] }
+        genre_mode: { $ref: "#/components/schemas/GenreMode" }
+        genre_id: { type: integer }
+        genre_name: { type: string }
+        genre_reason: { type: string, description: "おまかせ選択理由 + 判断数値(FR-074)" }
+        state: { $ref: "#/components/schemas/SlotState" }
+        current_stage: { $ref: "#/components/schemas/ProductionStage" }
+        publish_block_reason: { $ref: "#/components/schemas/PublishBlockReason" }
+        approval_deadline_at: { type: string, format: date-time }
+        failed_category: { type: string }
+        youtube_video_id: { type: string }
+        published_at: { type: string, format: date-time }
+
+    SlotDetail:
+      allOf:
+        - $ref: "#/components/schemas/Slot"
+        - type: object
+          required: [artifacts, approvals, inspection_summary, timeline]
+          properties:
+            artifacts:
+              type: array
+              items: { $ref: "#/components/schemas/Artifact" }
+            approvals:
+              type: array
+              items: { $ref: "#/components/schemas/ApprovalRecord" }
+            inspection_summary:
+              type: object
+              description: AI 開示 / 指紋 / 音量・尺・無音率 / 形式検証の合否(ADR-0042 (4))
+            timeline:
+              type: array
+              items: { $ref: "#/components/schemas/TimelineEvent" }
+            prompt_overrides: { type: object }
+
+    Artifact:
+      type: object
+      required: [id, kind, version, status, provenance, created_at]
+      properties:
+        id: { type: integer }
+        kind: { $ref: "#/components/schemas/ArtifactKind" }
+        track_index: { type: integer, minimum: 1, maximum: 6 }
+        version: { type: integer }
+        status: { type: string, enum: [valid, invalidated, file_deleted] }
+        uri: { type: string }
+        content: { type: object }
+        provenance:
+          type: object
+          description: prompt_version / model / 上流成果物の版(ADR-0046 (1))
+        created_at: { type: string, format: date-time }
+        invalidated_at: { type: string, format: date-time }
+        file_deleted_at: { type: string, format: date-time }
+
+    ArtifactRef:
+      type: object
+      required: [kind, version]
+      properties:
+        kind: { $ref: "#/components/schemas/ArtifactKind" }
+        track_index: { type: integer }
+        version: { type: integer }
+
+    RerunRequest:
+      type: object
+      required: [target, reason]
+      properties:
+        target:
+          $ref: "#/components/schemas/ArtifactRef"
+          description: 再生成する成果物(track は track_index 指定で単体再生成)
+        reason: { type: string, minLength: 1 }
+        prompt_override:
+          type: object
+          description: この枠だけに適用するプロンプト版(ADR-0046 (4))
+
+    AdhocSlotInput:
+      type: object
+      required: [publish_at, genre_mode]
+      properties:
+        publish_at: { type: string, format: date-time }
+        genre_mode: { $ref: "#/components/schemas/GenreMode" }
+        genre_id: { type: integer }
+        reuse_from_slot_id: { type: integer, description: "終端枠の成果物再利用(30 日以内、ADR-0045 (3))" }
+
+    ApprovalRecord:
+      type: object
+      required: [id, actor, action, autonomy_level, created_at]
+      properties:
+        id: { type: integer }
+        actor: { type: string, enum: [human, system] }
+        action: { type: string, enum: [approve, reject] }
+        reason: { type: string }
+        autonomy_level: { $ref: "#/components/schemas/AutonomyLevel" }
+        invalidated_at: { type: string, format: date-time, description: "承認失効(T17)" }
+        created_at: { type: string, format: date-time }
+
+    SystemState:
+      type: object
+      required: [state, changed_via, changed_by, updated_at]
+      properties:
+        state: { $ref: "#/components/schemas/SystemStateKind" }
+        changed_via: { type: string, enum: [cli, slack, auto] }
+        changed_by: { type: string }
+        reason: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    AutonomyStatus:
+      type: object
+      required: [level, level_since, promotion]
+      properties:
+        level: { $ref: "#/components/schemas/AutonomyLevel" }
+        level_since: { type: string, format: date-time }
+        promotion:
+          type: object
+          description: 各レベルへの昇格可否と判定数値(FR-033)
+          properties:
+            l1:
+              type: object
+              properties:
+                eligible: { type: boolean }
+                consecutive_clean_approvals: { type: integer }
+                required: { type: integer }
+                inspection_failures: { type: integer }
+            l2:
+              type: object
+              properties:
+                eligible: { type: boolean }
+                days_on_l1: { type: integer }
+                required_days: { type: integer }
+                withdrawals: { type: integer }
+                compliance_errors: { type: integer }
+
+    Genre:
+      type: object
+      required: [id, name, display_name_ja, role, enabled, is_paused]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        display_name_ja: { type: string }
+        role: { $ref: "#/components/schemas/GenreRole" }
+        target_share: { type: number }
+        enabled: { type: boolean }
+        is_paused: { type: boolean }
+        paused_reason: { type: string }
+
+    GenreInput:
+      type: object
+      required: [name, display_name_ja]
+      properties:
+        name: { type: string }
+        display_name_ja: { type: string }
+        bpm_min: { type: integer }
+        bpm_max: { type: integer }
+        prompt_hints: { type: object }
+
+    GenreRecommendation:
+      type: object
+      required: [genre_id, recommendation, evidence]
+      properties:
+        genre_id: { type: integer }
+        recommendation: { type: string, enum: [promote, retire, reduce_share, keep] }
+        evidence:
+          type: object
+          description: 判断に使った数値(総視聴時間期待値 / 維持率 / サンプル数、FR-074)
+
+    AnalyticsOverview:
+      type: object
+      required: [week_start, total_minutes_watched, guardrail]
+      properties:
+        week_start: { type: string, format: date }
+        total_minutes_watched: { type: number }
+        total_minutes_watched_provisional: { type: boolean }
+        guardrail:
+          type: array
+          items:
+            type: object
+            properties:
+              genre_id: { type: integer }
+              retention_avg: { type: number }
+              retention_floor: { type: number, description: "直近実績中央値 × 0.8" }
+              breach_weeks: { type: integer }
+              sample_count: { type: integer }
+              statistical: { type: boolean, description: "サンプル 3 本未満は false(統計判断対象外)" }
+
+    GenreAnalytics:
+      type: object
+      properties:
+        genre_id: { type: integer }
+        videos: { type: integer }
+        minutes_watched: { type: number }
+        retention_avg: { type: number }
+        provisional: { type: boolean }
+
+    ViewerVoices:
+      type: object
+      required: [read_only, total, sentiment, representative]
+      properties:
+        read_only: { type: boolean, const: true }
+        total: { type: integer }
+        sentiment: { type: object }
+        representative:
+          type: array
+          items:
+            type: object
+            properties:
+              text: { type: string }
+              like_count: { type: integer }
+
+    TimelineEvent:
+      type: object
+      required: [id, event_type, actor, payload, created_at]
+      properties:
+        id: { type: integer }
+        slot_id: { type: integer }
+        event_type: { type: string }
+        actor: { type: string }
+        payload: { type: object }
+        created_at: { type: string, format: date-time }
+
+    PromptInfo:
+      type: object
+      required: [area, name, versions, current_version]
+      properties:
+        area: { type: string, description: "工程 1:1(planning / packaging 等)" }
+        name: { type: string }
+        versions:
+          type: array
+          items: { type: integer }
+        current_version: { type: integer }
+
+    ApiError:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+        current_state: { $ref: "#/components/schemas/SlotState" }
+        allowed_transitions:
+          type: array
+          items: { type: string }
