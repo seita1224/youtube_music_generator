@@ -148,9 +148,9 @@ class SchedulerHaltError(FatalError):
     除去)まで必要なインフラ級 fatal を表す。 例: DB 不達(記録自体が信頼できない)、 PostgreSQL
     ダンプ失敗、 AcoustID API ダウンのリトライ枯渇。 翌日の cron を空振りさせず人手の介入を促す。
 
-    一方、 個別 post の content fatal(計画解決不能など)は通常の :class:`FatalError` とし、
-    当該サイクルの中断に留める(scheduler は継続)。 scheduler の job wrapper が本例外を捕捉して
-    ``disable()`` を呼ぶ(:mod:`ymg_backend.infrastructure.scheduler`)。
+    一方、 個別枠の content fatal(企画解決不能など)は通常の :class:`FatalError` とし、
+    当該枠の中断に留める。 本例外はシステム状態 ``stopped`` への遷移を要する
+    (ADR-0044: fatal → ``stopped`` + Slack 通知)。
     """
 
 
