@@ -29,14 +29,14 @@ description: "Implementation task list for 枠中心モデルへの再設計 (Sl
 
 **Purpose**: in-place 置き換えの下地。旧概念(Plan / dryrun / Post / panic-stop / mvp-check)のコードを撤去し、移植対象モジュールだけを残してビルド可能にする。旧実装の参照は git 履歴(`main@9c42624`)で行う。
 
-- [ ] T001 backend 旧オーケストレーション削除: `domain/plans/` `domain/dryrun/` `domain/panic_stop/` `domain/mvp_check/` `domain/genres/`(rotation / recommend)`domain/pipeline/`(music_jobs 等は Phase 3 で移植改修するため `_legacy` 参照用に一時退避せず削除)、旧 `api/*`、`infrastructure/scheduler.py` の旧 job 配線を削除。`main.py` を `/health` のみの最小スケルトンに置換(セッション認証 / Basic は温存)
-- [ ] T002 backend 旧テスト削除: `tests/` から旧オーケストレーション対象を削除(移植対象 critical テスト = fernet / llm_provider / directive_parser / acoustid / compliance_validation は残す)。`tests/property/` ディレクトリ新設
-- [ ] T003 backend 旧 alembic versions を削除し、新チェーン用に `alembic/versions/` を空にする(env.py は継承)
-- [ ] T004 [P] frontend 旧画面削除: `app/(admin)/plans/` `dryrun/` `jobs/` `scheduler/` `analytics/` `genres/` `llm/` `prompts/` と旧ダッシュボード `page.tsx` を削除、ナビゲーションを新 7 画面(編成表 / 枠詳細 / タイムライン / ジャンル / 分析 / プロンプト / 設定)の placeholder に置換(auth BFF `app/api/` `app/login/` は温存)
-- [ ] T005 [P] `.env.example` 更新: `PUBLISH_WARN_PER_DAY` / `YMG_ADMIN_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `LEGACY_DATABASE_URL` 追加、`DRYRUN_DEFAULT` 削除(quickstart §1)
-- [ ] T006 [P] backend `pyproject.toml` に typer / slack-bolt / hypothesis を uv add(research R-2 / R-3 / R-5。版は lockfile 確定時に最新安定を確認)
-- [ ] T007 [P] `Makefile` 更新: `panic-stop` ターゲット削除(ADR-0044 置換)、`migrate-legacy` 追加、他ターゲット温存。`infra/scripts/panic-stop.sh` 削除
-- [ ] T008 [P] `.github/workflows/ci.yml` のテストパス / カバレッジ設定を新構成(critical 8 件 + property)に更新(ゲート強制は T086)
+- [x] T001 backend 旧オーケストレーション削除: `domain/plans/` `domain/dryrun/` `domain/panic_stop/` `domain/mvp_check/` `domain/genres/`(rotation / recommend)`domain/pipeline/`(music_jobs 等は Phase 3 で移植改修するため `_legacy` 参照用に一時退避せず削除)、旧 `api/*`、`infrastructure/scheduler.py` の旧 job 配線を削除。`main.py` を `/health` のみの最小スケルトンに置換(セッション認証 / Basic は温存)
+- [x] T002 backend 旧テスト削除: `tests/` から旧オーケストレーション対象を削除(移植対象 critical テスト = fernet / llm_provider / directive_parser / acoustid / compliance_validation は残す)。`tests/property/` ディレクトリ新設
+- [x] T003 backend 旧 alembic versions を削除し、新チェーン用に `alembic/versions/` を空にする(env.py は継承)
+- [x] T004 [P] frontend 旧画面削除: `app/(admin)/plans/` `dryrun/` `jobs/` `scheduler/` `analytics/` `genres/` `llm/` `prompts/` と旧ダッシュボード `page.tsx` を削除、ナビゲーションを新 7 画面(編成表 / 枠詳細 / タイムライン / ジャンル / 分析 / プロンプト / 設定)の placeholder に置換(auth BFF `app/api/` `app/login/` は温存)
+- [x] T005 [P] `.env.example` 更新: `PUBLISH_WARN_PER_DAY` / `YMG_ADMIN_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `LEGACY_DATABASE_URL` 追加、`DRYRUN_DEFAULT` 削除(quickstart §1)
+- [x] T006 [P] backend `pyproject.toml` に typer / slack-bolt / hypothesis を uv add(research R-2 / R-3 / R-5。版は lockfile 確定時に最新安定を確認)
+- [x] T007 [P] `Makefile` 更新: `panic-stop` ターゲット削除(ADR-0044 置換)、`migrate-legacy` 追加、他ターゲット温存。`infra/scripts/panic-stop.sh` 削除
+- [x] T008 [P] `.github/workflows/ci.yml` のテストパス / カバレッジ設定を新構成(critical 8 件 + property)に更新(ゲート強制は T086)
 
 ---
 
