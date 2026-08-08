@@ -16,7 +16,7 @@ const ALL_NAV_ITEMS = [...PRIMARY_NAV_ITEMS, ...SECONDARY_NAV_ITEMS];
 
 // ルート別サブテキスト(無い画面は非表示)。
 const SUBTITLES: Readonly<Record<string, string>> = {
-  "/": "YouTube 音楽投稿自動化システムの横断的な状態確認",
+  "/": "週間の公開枠と制作ラインの現在地",
 };
 
 const FALLBACK_TITLE = "管理コンソール";
