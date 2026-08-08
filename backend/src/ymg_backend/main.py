@@ -1,4 +1,4 @@
-"""FastAPI app factory (T052, ADR-0009 / ADR-0013 / ADR-0031 / ADR-0038)。
+"""FastAPI app factory (ADR-0009 / ADR-0013 / ADR-0038)。
 
 責務:
 
@@ -7,111 +7,51 @@
    末尾に :data:`app` を公開する。
 2. **Basic 認証の全 endpoint 適用** (ADR-0013): ``/health`` 以外は
    :func:`~ymg_backend.core.security.require_basic_auth` を依存に持つ「認証付きルータ」
-   配下にぶら下げる。 ``/health`` は認証不要 (backend-api.yaml ``security: []``) なので
-   認証なしルータとして登録する。
-3. **RequestValidationError の機密 input 除去** (ADR-0038): ``api_key`` 等の提出値が
-   422 応答・ログに平文エコーされないよう専用ハンドラを登録する。
-4. **lifespan** (ADR-0031): 起動時に
-   - DB 接続を検証 (``SELECT 1``。 失敗は :class:`FatalError`、 DB 不可はサイクル停止)
-   - 孤立した ``running`` / ``executing`` / ``generating`` を failed に整合
-   - composition root で ``MusicRunService`` / ``SchedulerService`` を組み立て
-     ``app.state`` に注入する
-   - ``app_state.scheduler_enabled=true`` のときだけ ``SchedulerService.enable()``
-     (reboot 後は **false 起動が既定**、 手動 enable)
-   shutdown 時に scheduler を停止し DB エンジンを破棄する。
-
-設計方針:
-
-- 副作用を持つ依存 (engine / scheduler / orchestrator) は ``app.state`` に保持し、
-  lifespan でライフサイクルを閉じる (不変オブジェクトのみモジュールレベルに置く)。
-- scheduler の job 登録は ``SchedulerService.enable`` に委譲する (ADR-0031: false 起動が既定)。
-- ``app_state`` 参照は ORM 層 (T021) に依存せず、 ``api/health.py`` の Core Table を
-  再利用して疎結合を保つ。
+   配下にぶら下げる。 ``/health`` は認証不要 (backend-api.yaml ``security: []``)。
+3. **RequestValidationError の機密 input 除去** (ADR-0038)。
+4. **lifespan**: 起動時に DB 接続を検証 (``SELECT 1``。 失敗は :class:`FatalError`)、
+   shutdown 時に DB エンジンを破棄する。 スケジューラの再開 (ADR-0044: reboot 後
+   自動再開) は枠スケジューラ実装時にここへ配線する。
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 from collections.abc import AsyncIterator
 from typing import Final
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import APIRouter, Depends, FastAPI
-from loguru import logger
-from sqlalchemy import select, text
+from sqlalchemy import text
 from starlette.types import Lifespan
 
-from ymg_backend.api.analytics import router as analytics_router
-from ymg_backend.api.dryrun import router as dryrun_router
-from ymg_backend.api.genres import router as genres_router
-from ymg_backend.api.health import app_state_table
 from ymg_backend.api.health import router as health_router
-from ymg_backend.api.llm import router as llm_router
-from ymg_backend.api.mvp_check import router as mvp_check_router
-from ymg_backend.api.panic_stop import router as panic_stop_router
-from ymg_backend.api.plans import router as plans_router
-from ymg_backend.api.posts import router as posts_router
-from ymg_backend.api.prompts import router as prompts_router
-from ymg_backend.api.scheduler import router as scheduler_router
-from ymg_backend.api.sse import router as sse_router
 from ymg_backend.core.config import Settings, get_settings
 from ymg_backend.core.logging import setup_logging
 from ymg_backend.core.security import require_basic_auth
 from ymg_backend.core.validation_errors import register_validation_exception_handler
 from ymg_backend.domain.errors.errors import FatalError
-from ymg_backend.infrastructure.composition import (
-    build_music_run_service,
-    build_scheduler_service,
-    make_music_cron_runner,
-)
-from ymg_backend.infrastructure.db.orphan_reconciliation import reconcile_orphaned_runs
 from ymg_backend.infrastructure.db.session import dispose_engine, get_sessionmaker
-from ymg_backend.infrastructure.slack.notifier import SlackNotifier
 
 _API_TITLE: Final[str] = "YMG Backend API"
-_API_VERSION: Final[str] = "1.0.0"
-
-# app_state のキー (data-model.md §app_state seed / 001_initial.py `_seed_app_state`)。
-_KEY_SCHEDULER_ENABLED: Final[str] = "scheduler_enabled"
+_API_VERSION: Final[str] = "2.0.0"
 
 
 async def _verify_db_connection() -> None:
-    """起動時に ``SELECT 1`` で DB 接続を検証する (ADR-0031)。
+    """起動時に ``SELECT 1`` で DB 接続を検証する。
 
     Raises:
-        FatalError: DB へ接続できない場合 (ADR-0028: DB 接続不可は fatal、
-            サイクル全体停止カテゴリ)。
+        FatalError: DB へ接続できない場合 (ADR-0028: DB 接続不可は fatal)。
     """
     sessionmaker = get_sessionmaker()
     try:
         async with sessionmaker() as session:
             await session.execute(text("SELECT 1"))
     except Exception as exc:
-        # 種別を問わず DB 不達は fatal に正規化する (ADR-0028)。
         raise FatalError(
             "Database connection failed at startup; check POSTGRES_* settings.",
             context={"component": "startup_db"},
             original=exc,
         ) from exc
-
-
-async def _read_scheduler_enabled() -> bool:
-    """``app_state.scheduler_enabled`` を読む (取得不能/型不一致は false, ADR-0031)。"""
-    sessionmaker = get_sessionmaker()
-    stmt = select(app_state_table.c.value).where(app_state_table.c.key == _KEY_SCHEDULER_ENABLED)
-    async with sessionmaker() as session:
-        raw = (await session.execute(stmt)).scalar_one_or_none()
-    value: object = raw
-    if isinstance(value, str):
-        with contextlib.suppress(ValueError, TypeError):
-            value = json.loads(value)
-    return value if isinstance(value, bool) else False
-
-
-def _build_scheduler() -> AsyncIOScheduler:
-    """scheduler instance を構築する (起動準備のみ、 job 登録はしない, ADR-0031)。"""
-    return AsyncIOScheduler(timezone="Asia/Tokyo")
 
 
 def _build_lifespan(settings: Settings) -> Lifespan[FastAPI]:
@@ -121,45 +61,9 @@ def _build_lifespan(settings: Settings) -> Lifespan[FastAPI]:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         setup_logging(level=settings.log_level)
         await _verify_db_connection()
-
-        sessionmaker = get_sessionmaker()
-        # 再起動で残った in-flight 行を failed 確定し、 single-flight 枠を解放する。
-        async with sessionmaker() as session:
-            await reconcile_orphaned_runs(session)
-            await session.commit()
-
-        # scheduler instance + composition root (MusicRunService / CycleRunner)。
-        scheduler = _build_scheduler()
-        app.state.scheduler = scheduler
-
-        music_run_service = build_music_run_service(settings, session_factory=sessionmaker)
-        cycle_runner = make_music_cron_runner(music_run_service)
-        notifier = SlackNotifier(settings.slack_webhook_url)
-        scheduler_service = build_scheduler_service(
-            scheduler, cycle_runner=cycle_runner, notifier=notifier
-        )
-        app.state.scheduler_service = scheduler_service
-        app.state.music_run_service = music_run_service
-        app.state.cycle_runner = cycle_runner
-        logger.bind(component="lifespan").info("scheduler_service wired (music_generation)")
-
-        # ADR-0031: reboot 後は false 起動が既定。 enabled のときだけ job 登録 + start。
-        scheduler_enabled = await _read_scheduler_enabled()
-        if scheduler_enabled:
-            scheduler_service.enable()
-            logger.bind(component="lifespan").info(
-                "scheduler enabled (scheduler_enabled=true, jobs registered)"
-            )
-        else:
-            logger.bind(component="lifespan").info(
-                "scheduler_service ready but not enabled (scheduler_enabled=false, ADR-0031)"
-            )
-
         try:
             yield
         finally:
-            if scheduler.running:
-                scheduler.shutdown(wait=False)
             await dispose_engine()
 
     return lifespan
@@ -169,8 +73,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """FastAPI アプリケーションを生成する (app factory)。
 
     ``/health`` 以外の全 endpoint に Basic 認証を適用する (ADR-0013)。 新しい
-    認証付きルータは :func:`_build_protected_router` 経由で束ねた親ルータに
-    ``include_router`` して登録する。
+    認証付きルータは :func:`_build_protected_router` の配下に ``include_router``
+    して登録する。
 
     Args:
         settings: 設定オブジェクト。 ``None`` の場合は ``get_settings()`` を使う。
@@ -181,7 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings if settings is not None else get_settings()
 
     # /docs / redoc / openapi.json は公開しない(LAN でもスキーマ列挙を避ける)。
-    # 契約スキーマは specs/.../contracts/backend-api.yaml を正とする。
+    # 契約スキーマは specs/002-slot-centric-redesign/contracts/backend-api.yaml が正。
     app = FastAPI(
         title=_API_TITLE,
         version=_API_VERSION,
@@ -197,36 +101,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # /health は認証不要 (backend-api.yaml security: [])。
     app.include_router(health_router)
 
-    # /health 以外は Basic 認証必須。 親ルータに認証依存を付け、 後続の保護対象
-    # ルータ (plans / posts / scheduler 等, T076 以降) はこの配下に include する。
-    protected = _build_protected_router()
-    app.include_router(protected)
+    # /health 以外は Basic 認証必須。 業務ルータ (schedule / slots / system 等) は
+    # この親ルータ配下に include する (子ルータ側には認証依存を再付与しない)。
+    app.include_router(_build_protected_router())
 
     return app
 
 
 def _build_protected_router() -> APIRouter:
-    """Basic 認証を全 endpoint に適用する親ルータを返す (ADR-0013)。
-
-    ``dependencies=[Depends(require_basic_auth)]`` を親に付けることで、 配下の
-    全ルータ・全 endpoint に認証が効く。 業務ルータ (plans / posts / scheduler /
-    dryrun / genres / analytics / llm / mvp-check / prompts) はここに
-    ``router.include_router(...)`` で追加する。 子ルータ側には認証依存を再付与しない
-    (共有契約 (c): 認証は親が付与)。
-    """
-    router = APIRouter(dependencies=[Depends(require_basic_auth)])
-    router.include_router(plans_router)
-    router.include_router(posts_router)
-    router.include_router(scheduler_router)
-    router.include_router(panic_stop_router)
-    router.include_router(dryrun_router)
-    router.include_router(genres_router)
-    router.include_router(analytics_router)
-    router.include_router(llm_router)
-    router.include_router(sse_router)
-    router.include_router(mvp_check_router)
-    router.include_router(prompts_router)
-    return router
+    """Basic 認証を全 endpoint に適用する親ルータを返す (ADR-0013)。"""
+    return APIRouter(dependencies=[Depends(require_basic_auth)])
 
 
 app: Final[FastAPI] = create_app()
