@@ -33,14 +33,14 @@ import pytest
 import respx
 from pydantic import SecretStr
 
-from ymg_backend.domain.errors import NotificationLevel
-from ymg_backend.domain.pipeline.acoustid import (
+from ymg_backend.domain.compliance.acoustid import (
     ACOUSTID_CONSECUTIVE_HIT_LIMIT,
     ACOUSTID_LOOKUP_URL,
     ACOUSTID_MATCH_THRESHOLD,
     AcoustidChecker,
     AcoustidVerdict,
 )
+from ymg_backend.domain.errors import NotificationLevel
 
 pytestmark = pytest.mark.critical
 

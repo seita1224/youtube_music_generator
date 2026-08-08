@@ -23,7 +23,7 @@ import pytest
 import respx
 from pydantic import SecretStr
 
-from ymg_backend.domain.pipeline.acoustid import (
+from ymg_backend.domain.compliance.acoustid import (
     ACOUSTID_LOOKUP_URL,
     ACOUSTID_MATCH_THRESHOLD,
     AcoustidChecker,
