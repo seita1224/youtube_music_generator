@@ -12,7 +12,7 @@
 # 使い方: bash infra/scripts/backup.sh   または   make backup   または   systemd ymg-backup.service
 set -euo pipefail
 
-# .env があれば接続情報のみ読む (healthcheck.sh / panic-stop.sh 踏襲)。
+# .env があれば接続情報のみ読む (healthcheck.sh 踏襲)。
 # 注意: FERNET_KEY もここで環境に載るが、 本スクリプトは一切バックアップに書き出さない。
 if [ -f .env ]; then
   set -a
